@@ -1,7 +1,8 @@
 # Coding standards
 
-Copy this file to the root of a project as `CODING_STANDARDS.md`.
-Retemper reads it when present and ignores it when absent.
+Living document. Retemper reads this file every run and, by default, updates
+it at the end with conventions the work actually established.
+Disable that with `--no-standards` / `update_standards: false`.
 
 Keep this file short. Put only rules a stranger would miss.
 

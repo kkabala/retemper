@@ -3,14 +3,15 @@ let meta = #{
     description: "Plan, accept, build, harden, review, QA, and open a PR — no skipped gates after Development",
     when_to_use: "When a task should go through architect grilling, acceptance tests, TDD development, cleanup, testing, review, final QA, and pipeline monitoring, replaying every later phase after a return to Development",
     phases: [
-        #{ title: "Planning", detail: "architect + grill-me; skipped only with no_plan and a plan or ticket" },
+        #{ title: "Planning", detail: "architect + grill-me (grill even if a plan exists)" },
         #{ title: "Acceptance tests", detail: "user-facing definition of done" },
         #{ title: "Development", detail: "TDD, Clean Code, SOLID / KISS / YAGNI / DRY" },
         #{ title: "Cleaner", detail: "same behaviour, cleaner design" },
         #{ title: "Testing", detail: "manual gaps; automate what was missed" },
         #{ title: "Code review", detail: "diff review; missing tests are blockers" },
         #{ title: "Final QA Review", detail: "boot, re-run acceptance, try to break it" },
-        #{ title: "Pipeline monitoring", detail: "open PR, merge only on a real green signal" },
+        #{ title: "Pipeline monitoring", detail: "open PR; pause until CI is actually done" },
+        #{ title: "Standards", detail: "living CODING_STANDARDS.md unless turned off" },
     ],
 };
 
@@ -48,8 +49,101 @@ fn trimmed(s) {
 
 fn is_map(x) { type_of(x) == "map" }
 
+fn contains_text(hay, needle) {
+    if type_of(hay) != "string" || type_of(needle) != "string" { return false; }
+    if needle.len() == 0 { return true; }
+    if hay.len() < needle.len() { return false; }
+    let i = 0;
+    while i + needle.len() <= hay.len() {
+        if hay.sub_string(i, needle.len()) == needle { return true; }
+        i += 1;
+    }
+    false
+}
+
+fn take_after(hay, flag) {
+    let padded = " " + hay + " ";
+    let needle = " " + flag + " ";
+    let i = 0;
+    while i + needle.len() <= padded.len() {
+        if padded.sub_string(i, needle.len()) == needle {
+            let rest = padded.sub_string(i + needle.len(), padded.len() - (i + needle.len()));
+            rest.trim();
+            let end = 0;
+            while end < rest.len() && rest.sub_string(end, 1) != " " { end += 1; }
+            return rest.sub_string(0, end);
+        }
+        i += 1;
+    }
+    ""
+}
+
+fn strip_flags(line) {
+    let out = "";
+    let token = "";
+    let skip_next = false;
+    let padded = line + " ";
+    let i = 0;
+    while i < padded.len() {
+        let ch = padded.sub_string(i, 1);
+        if ch == " " {
+            if token != "" {
+                if skip_next {
+                    skip_next = false;
+                } else if token == "--no-grill" || token == "--no-grill-me" || token == "--no-plan" || token == "--no-standards" {
+                } else if token == "--ticket" || token == "--plan" {
+                    skip_next = true;
+                } else if contains_text(token, "--ticket=") || contains_text(token, "--plan=") {
+                } else if !contains_text(token, "--") {
+                    if out != "" { out += " "; }
+                    out += token;
+                }
+                token = "";
+            }
+        } else {
+            token += ch;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn empty_bag() {
+    #{ task: "", plan: "", ticket: "", focus: "", no_plan: false, grill: true, update_standards: true }
+}
+
+fn normalize_args(raw) {
+    let bag = empty_bag();
+    if raw == () { return bag; }
+    if type_of(raw) == "string" {
+        let line = trimmed(raw);
+        bag.task = strip_flags(line);
+        if contains_text(line, "--no-grill") || contains_text(line, "--no-grill-me") { bag.grill = false; }
+        if contains_text(line, "--no-plan") { bag.no_plan = true; }
+        if contains_text(line, "--no-standards") { bag.update_standards = false; }
+        let ticket = take_after(line, "--ticket");
+        if ticket != "" { bag.ticket = ticket; }
+        let plan = take_after(line, "--plan");
+        if plan != "" { bag.plan = plan; }
+        return bag;
+    }
+    if !is_map(raw) { return bag; }
+    bag.task = trimmed(raw.task);
+    bag.plan = trimmed(raw.plan);
+    bag.ticket = trimmed(raw.ticket);
+    bag.focus = trimmed(raw.focus);
+    if raw.no_plan == true { bag.no_plan = true; }
+    if raw.grill == false || raw.grill_me == false || raw.no_grill == true || raw.no_grill_me == true {
+        bag.grill = false;
+    }
+    if raw.update_standards == false || raw.living_standards == false || raw.no_standards == true {
+        bag.update_standards = false;
+    }
+    bag
+}
+
 fn arg_text(bag, key) {
-    if bag == () { return ""; }
+    if !is_map(bag) { return ""; }
     if key == "task" { return trimmed(bag.task); }
     if key == "plan" { return trimmed(bag.plan); }
     if key == "ticket" { return trimmed(bag.ticket); }
@@ -58,11 +152,23 @@ fn arg_text(bag, key) {
 }
 
 fn want_no_plan(bag) {
-    bag != () && bag.no_plan == true
+    is_map(bag) && bag.no_plan == true
+}
+
+fn want_grill(bag) {
+    is_map(bag) && bag.grill != false
+}
+
+fn want_standards(bag) {
+    is_map(bag) && bag.update_standards != false
 }
 
 fn has_brief(bag) {
     arg_text(bag, "plan") != "" || arg_text(bag, "ticket") != ""
+}
+
+fn skip_planning(bag) {
+    want_no_plan(bag) && has_brief(bag) && !want_grill(bag)
 }
 
 fn should_return(res) {
@@ -96,11 +202,13 @@ fn task_blob(bag) {
     text
 }
 
-let bag = args;
+let bag = normalize_args(args);
 let task = arg_text(bag, "task");
-if task == "" { pause("verification", "Pass args.task — what to ship."); }
+if task == "" {
+    pause("verification", "Say what to ship. Easiest: /workflow retemper Add CSV export   — or JSON {\"task\":\"Add CSV export\"}. Optional flags: --no-grill --no-plan --ticket ID --no-standards");
+}
 if want_no_plan(bag) && !has_brief(bag) {
-    pause("verification", "Pass args.plan or args.ticket when args.no_plan is true.");
+    pause("verification", "When skipping a new plan (--no-plan / no_plan), pass a ticket or an existing plan.");
 }
 
 let brief_json = json_encode(#{
@@ -109,13 +217,15 @@ let brief_json = json_encode(#{
     ticket: arg_text(bag, "ticket"),
     focus: arg_text(bag, "focus"),
     no_plan: want_no_plan(bag),
+    grill: want_grill(bag),
+    update_standards: want_standards(bag),
 });
 
 // --- Planning -------------------------------------------------------------
 phase("Planning");
 let plan_summary = "";
-if want_no_plan(bag) && has_brief(bag) {
-    log("Planning skipped (no_plan with an existing plan or ticket)");
+if skip_planning(bag) {
+    log("Planning skipped (no_plan + brief + --no-grill)");
     plan_summary = arg_text(bag, "plan");
     if plan_summary == "" { plan_summary = "Ticket " + arg_text(bag, "ticket"); }
 } else {
@@ -123,11 +233,22 @@ if want_no_plan(bag) && has_brief(bag) {
     p_prompt += "You are the Architect. Modular, domain-driven, hexagonal / plug-in shape. ";
     p_prompt += "Small coherent packages, not a monolith of huge horizontal layers. ";
     p_prompt += "Use read-only tools first (read_file, grep, list_dir). Look up facts. ";
-    p_prompt += "Do not implement. Write a plan an independent developer can follow. ";
-    p_prompt += "Also run a grilling interview in the Matt Pocock grill-me / grilling sense: ";
-    p_prompt += "design tree, frontier questions, recommended answers, decisions for the user, facts for you. ";
-    p_prompt += "If a grilling skill file exists (grill-me or grilling), read it and follow it. ";
-    p_prompt += "Set grill_open=true if any decision is still the user's. ";
+    p_prompt += "Do not implement. ";
+    if want_no_plan(bag) && has_brief(bag) {
+        p_prompt += "A plan or ticket already exists — do not replace it. Refine only if grilling uncovers a hole. ";
+        plan_summary = arg_text(bag, "plan");
+        if plan_summary == "" { plan_summary = "Ticket " + arg_text(bag, "ticket"); }
+    } else {
+        p_prompt += "Write a plan an independent developer can follow. ";
+    }
+    if want_grill(bag) {
+        p_prompt += "Run a grilling interview (Matt Pocock grill-me / grilling) even though a brief may already exist. ";
+        p_prompt += "Design tree, frontier questions, recommended answers. Decisions for the user, facts for you. ";
+        p_prompt += "If a grilling or grill-me skill file exists, read it and follow it. ";
+        p_prompt += "Set grill_open=true if any decision is still the user's. ";
+    } else {
+        p_prompt += "Grilling is turned off (--no-grill). Do not interview. Set grill_open=false. ";
+    }
     p_prompt += task_blob(bag);
     p_prompt += " Brief JSON: " + brief_json + ".";
 
@@ -138,14 +259,14 @@ if want_no_plan(bag) && has_brief(bag) {
     });
 
     if plan_res != () && plan_res.success && is_map(plan_res.output) {
-        plan_summary = trimmed(plan_res.output.summary);
-        if plan_res.output.grill_open == true {
+        if trimmed(plan_res.output.summary) != "" { plan_summary = trimmed(plan_res.output.summary); }
+        if want_grill(bag) && plan_res.output.grill_open == true {
             let q = trimmed(plan_res.output.questions);
             let msg = "Planning grill is open. Answer the frontier questions, then resume.";
             if q != "" { msg += " " + q; }
             await_user("user", msg);
         }
-    } else {
+    } else if want_grill(bag) {
         await_user("user", "Architect did not return a usable plan. Confirm or paste a plan, then resume.");
     }
     if plan_summary == "" { plan_summary = arg_text(bag, "task"); }
@@ -298,8 +419,9 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         i_prompt += "Final QA approved. Open a pull request (or this repo's equivalent). ";
         i_prompt += "If a pipeline exists, use its real status. Merge only on a real green signal. ";
         i_prompt += "If CI failed because of code, set return_to_dev=true with the first real error. ";
-        i_prompt += "If there is no pipeline, or CI is still running, or merge needs a human, set needs_user=true and do not merge. ";
-        i_prompt += "Never sleep-wait. Never invent a green build. ";
+        i_prompt += "If there is no pipeline, or CI is still running (15-minute jobs are normal), set needs_user=true and do not merge. ";
+        i_prompt += "The workflow will pause; the human resumes it when CI is done. That is how we wait — do not busy-loop. ";
+        i_prompt += "Never invent a green build. ";
         i_prompt += task_blob(bag);
         let pi_res = agent(i_prompt, #{
             label: "pipeline:" + cycle.to_string(),
@@ -312,7 +434,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
             if pi_res != () && is_map(pi_res.output) { last_reason = trimmed(pi_res.output.reason) + " " + trimmed(pi_res.output.evidence); }
             else { last_reason = "Pipeline returned no usable verdict"; }
         } else if needs_human(pi_res) {
-            await_user("user", "CI is missing or still running. Resume when it is green, or say that it failed.");
+            await_user("user", "CI is missing or still running (often 10–20 minutes). When it finishes, run /workflow resume retemper — or say that it failed.");
             let pi2 = agent(i_prompt + " The user resumed after a CI gate. Re-check status and merge only if green.", #{
                 label: "pipeline-recheck:" + cycle.to_string(),
                 capability_mode: "all",
@@ -344,6 +466,27 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
             log("Returning to Development; replaying every later phase (from " + bounce_from + ")");
         }
     }
+}
+
+phase("Standards");
+if finished && want_standards(bag) {
+    let s_prompt = role_prefix("standards.md");
+    s_prompt += "CODING_STANDARDS.md is a living document. Update it with conventions this run actually established. ";
+    s_prompt += "Create it if missing. Keep it short. Do not invent a stack the repo does not use. ";
+    s_prompt += "If nothing new was learned, leave the file alone and say so. ";
+    s_prompt += task_blob(bag);
+    let st_res = agent(s_prompt, #{
+        label: "standards",
+        capability_mode: "all",
+        output_schema: verdict_schema,
+    });
+    if st_res != () && st_res.success && is_map(st_res.output) && trimmed(st_res.output.summary) != "" {
+        last_reason = last_reason + " | standards: " + trimmed(st_res.output.summary);
+    }
+} else if !want_standards(bag) {
+    log("CODING_STANDARDS.md left untouched (--no-standards / update_standards=false)");
+} else {
+    log("Standards skipped because the run did not finish cleanly");
 }
 
 let status = "complete";

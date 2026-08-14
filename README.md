@@ -2,22 +2,67 @@
 
 A project-agnostic **plan → accept → build → harden → review → QA → PR** cycle.
 
-The conductor is a [Grok Build](https://grok.x.ai) workflow: a program, not a prompt. Later phases never skip after Development. A return from Cleaner, Testing, Review, Final QA, or a code-caused pipeline failure goes back to Development and replays every later phase in order.
-
-Named after re-tempering steel — heat, quench, inspect, repeat — not after “workflow-dev”.
-
 ## Cycle
 
-1. **Planning** — modular, domain-driven, hexagonal / plug-in architecture. Runs a [grill-me](https://github.com/mattpocock/skills) / grilling interview unless you already have a plan or ticket.
+1. **Planning** — modular, domain-driven, hexagonal / plug-in architecture. Always runs **grill-me**, even if you already have a plan or ticket. Turn grilling off only with `--no-grill` / `grill: false`.
 2. **Acceptance tests** — user-facing end-to-end criteria. If they all pass, the task is done from the user’s point of view.
 3. **Development** — TDD first, then Clean Code / Clean Coder, SOLID, KISS, YAGNI, DRY.
 4. **Cleaner** — same behaviour, cleaner design. May return to Development.
 5. **Testing** — cover what TDD and acceptance missed; automate if it was just forgotten. May return to Development.
 6. **Code review** — real diff; missing tests are blockers. May return to Development.
 7. **Final QA Review** — boot what exists, re-run acceptance tests, try to break it. May return to Development.
-8. **Pipeline monitoring** — open a PR, merge only on a real green signal. Code-caused CI failure returns to Development.
+8. **Pipeline monitoring** — open a PR. If CI needs 15 minutes, the run **pauses**; you resume it when the build is done. Code-caused CI failure returns to Development.
+9. **Standards** — update living `CODING_STANDARDS.md` unless you pass `--no-standards`.
 
-Planning is the only legal skip: `no_plan=true` **and** a `plan` or `ticket`.
+Skip writing a *new* architecture plan with `--no-plan` plus a ticket or existing plan. That does **not** skip the grill.
+
+## How to launch
+
+JSON objects are what Grok’s `/workflow` docs show. You do **not** have to use them.
+
+Plain sentence (preferred):
+
+```
+/workflow retemper Add CSV export
+```
+
+Same thing with flags:
+
+```
+/workflow retemper Add CSV export --ticket P2-014 --no-plan
+/workflow retemper Add CSV export --no-grill
+/workflow retemper Add CSV export --no-standards
+```
+
+JSON still works, if you want it:
+
+```
+/workflow retemper {"task":"Add CSV export","ticket":"P2-014","no_plan":true}
+/workflow retemper {"task":"Add CSV export","grill":false}
+/workflow retemper {"task":"Add CSV export","update_standards":false}
+```
+
+`/retemper` is the same workflow once it is installed in `~/.grok/workflows/`.
+
+| Intent | Flag | JSON |
+| --- | --- | --- |
+| Don’t write a new plan (still grill) | `--no-plan` + `--ticket ID` | `no_plan: true`, `ticket` or `plan` |
+| Don’t grill | `--no-grill` / `--no-grill-me` | `grill: false` or `grill_me: false` |
+| Don’t edit `CODING_STANDARDS.md` | `--no-standards` | `update_standards: false` |
+
+## Waiting on a 15-minute pipeline
+
+Grok workflows cannot `sleep()`. The Pipeline phase opens the PR, checks CI once, and if the job is still running it **pauses the run**. When the build finishes, resume:
+
+```
+/workflow resume retemper
+```
+
+The script then re-checks the real status and merges or returns to Development. That is the wait.
+
+## Living `CODING_STANDARDS.md`
+
+On by default. After a successful run, retemper updates (or creates) `CODING_STANDARDS.md` with conventions this task actually established. Disable with `--no-standards` / `update_standards: false`. A starter file lives in `templates/CODING_STANDARDS.md`.
 
 ## Install
 
@@ -27,63 +72,18 @@ Grok Build only for now. User scope (every project):
 node install.mjs --platform grok --scope user
 ```
 
-Project scope (this repo only):
+Project scope:
 
 ```bash
 node install.mjs --platform grok --scope project --target /path/to/repo
 ```
-
-See the plan without writing files or hitting the network:
 
 ```bash
 node install.mjs --help
 node install.mjs --dry-run --platform grok --scope user
 ```
 
-The installer copies the workflow and role references, then fetches Matt Pocock’s **grill-me** (and the **grilling** primitive it requires) via `npx skills@latest add mattpocock/skills`. Vendor copies ship in `vendor/` for offline fallback.
-
-Add `--standards` on a project install to copy `templates/CODING_STANDARDS.md` to the repo root if that file is missing.
-
-## Run
-
-```
-/retemper
-```
-
-or
-
-```
-/workflow retemper
-```
-
-```json
-{ "task": "Add CSV export for completed sessions" }
-```
-
-Skip planning when you already have the brief:
-
-```json
-{ "task": "Add CSV export", "no_plan": true, "ticket": "P2-014" }
-```
-
-Optional: `plan` (text or path), `focus`, `ticket`.
-
-## Extending a project
-
-Drop a `CODING_STANDARDS.md` at the repo root. Every role reads it when present and ignores it when absent. A starter lives in `templates/CODING_STANDARDS.md`.
-
-Role playbooks live in `.grok/retemper/references/` (or `~/.grok/retemper/references/` for a user install). Edit those — do not paste stack-specific ceremony into the workflow script.
-
-## Layout
-
-```
-.grok/workflows/retemper.rhai     Grok conductor
-.grok/retemper/references/        language-agnostic roles
-lib/cycle.mjs                     shipped control-flow helpers
-install.mjs                       platform + scope + grill-me
-vendor/grill-me grilling          offline copies of the interview skills
-templates/CODING_STANDARDS.md     optional project hook
-```
+The installer copies the workflow and role references, then fetches Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
 
 ## Tests
 

@@ -10,6 +10,7 @@ If every acceptance test passes, the task is finished from the user’s point of
 - Cover the happy path, empty/error states, and the quality the user can feel (it works, it is understandable, it does not trap them).
 - Each scenario: name, actor, setup, steps, observable outcome.
 - Prefer the project’s existing acceptance / e2e / feature-test layout. If none exists, write scenarios as executable tests in the repo’s closest convention, plus a readable list in `scratch` or a docs file the later phases can find.
+- When you're done, create a commit with your work
 
 ## What not to write
 

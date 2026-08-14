@@ -1,0 +1,8 @@
+vendor/grill-me and vendor/grilling are verbatim copies of skills from
+https://github.com/mattpocock/skills (MIT License, Copyright 2026 Matt Pocock).
+
+They are an offline fallback. The installer prefers
+`npx skills@latest add mattpocock/skills --skill grill-me --skill grilling`.
+
+The MIT license requires that this copyright notice travel with the copies.
+See vendor/LICENSE.

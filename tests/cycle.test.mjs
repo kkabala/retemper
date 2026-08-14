@@ -7,10 +7,13 @@ import test from "node:test";
 import {
   HARDENING_PHASES,
   PHASES,
+  parseLaunch,
   planningGateError,
   runCycle,
+  shouldGrill,
   shouldReturnToDevelopment,
   shouldSkipPlanning,
+  shouldUpdateStandards,
   walkHasNoSkipReplay,
 } from "../lib/cycle.mjs";
 
@@ -30,17 +33,32 @@ function bounceOn(phaseName, atCycle = 1) {
   };
 }
 
-test("planning is skipped only when no_plan is true and a plan or ticket exists", () => {
-  assert.equal(shouldSkipPlanning({ no_plan: true, ticket: "T-1", task: "x" }), true);
-  assert.equal(shouldSkipPlanning({ no_plan: true, plan: "ship it", task: "x" }), true);
-  assert.equal(shouldSkipPlanning({ no_plan: true, task: "x" }), false);
-  assert.equal(shouldSkipPlanning({ ticket: "T-1", task: "x" }), false);
-  assert.equal(shouldSkipPlanning({ no_plan: false, ticket: "T-1", task: "x" }), false);
+test("parseLaunch accepts a plain sentence and object fields", () => {
+  assert.deepEqual(parseLaunch("Add CSV export").task, "Add CSV export");
+  assert.equal(parseLaunch("Add CSV export").grill, true);
+  assert.equal(parseLaunch("Add CSV --no-grill --ticket P2-014").grill, false);
+  assert.equal(parseLaunch("Add CSV --no-grill --ticket P2-014").ticket, "P2-014");
+  assert.equal(parseLaunch({ task: "Add CSV", grill_me: false }).grill, false);
+  assert.equal(parseLaunch({ task: "Add CSV", no_grill: true }).grill, false);
+  assert.equal(parseLaunch({ task: "Add CSV" }).grill, true);
+  assert.equal(parseLaunch("Add CSV --no-standards").update_standards, false);
+  assert.equal(parseLaunch({ task: "Add CSV", update_standards: false }).update_standards, false);
+  assert.equal(parseLaunch({ task: "Add CSV" }).update_standards, true);
 });
 
-test("planningGateError requires a task and a brief when no_plan is set", () => {
-  assert.match(planningGateError({ no_plan: true }), /plan or args\.ticket/);
-  assert.match(planningGateError({}), /args\.task/);
+test("a provided plan still grills unless grill is turned off", () => {
+  assert.equal(shouldGrill({ task: "x", no_plan: true, ticket: "T-1" }), true);
+  assert.equal(shouldGrill({ task: "x", plan: "done", grill: false }), false);
+  assert.equal(shouldGrill("ship it --no-grill-me"), false);
+  assert.equal(shouldSkipPlanning({ task: "x", no_plan: true, ticket: "T-1" }), false);
+  assert.equal(shouldSkipPlanning({ task: "x", no_plan: true, ticket: "T-1", grill: false }), true);
+  assert.equal(shouldSkipPlanning({ task: "x", ticket: "T-1" }), false);
+});
+
+test("planningGateError requires a task; no_plan still needs a brief", () => {
+  assert.match(planningGateError({ no_plan: true }), /plan or ticket/);
+  assert.match(planningGateError({}), /what to ship/);
+  assert.equal(planningGateError("Add CSV export"), null);
   assert.equal(planningGateError({ task: "ship login", no_plan: true, ticket: "T-1" }), null);
 });
 
@@ -52,28 +70,48 @@ test("shouldReturnToDevelopment is fail-closed on missing verdicts and fail-clos
   assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence: "ok" }), false);
 });
 
-test("happy path walks Planning then Acceptance then every hardening phase once", () => {
+test("happy path walks Planning through Standards", () => {
   const result = runCycle({
-    args: { task: "add export" },
+    args: "add export",
     decide: alwaysAdvance,
   });
   assert.equal(result.status, "complete");
   assert.deepEqual(result.walk, PHASES);
+  assert.equal(result.launch.grill, true);
 });
 
-test("no_plan plus a ticket omits only Planning", () => {
+test("no_plan plus a ticket still includes Planning so the plan can be grilled", () => {
   const result = runCycle({
     args: { task: "add export", no_plan: true, ticket: "T-9" },
     decide: alwaysAdvance,
   });
+  assert.equal(result.walk[0], "Planning");
+  assert.deepEqual(result.walk, PHASES);
+});
+
+test("Planning is omitted only when no_plan and grill are both off", () => {
+  const result = runCycle({
+    args: { task: "add export", no_plan: true, ticket: "T-9", grill: false },
+    decide: alwaysAdvance,
+  });
   assert.equal(result.walk.includes("Planning"), false);
   assert.equal(result.walk[0], "Acceptance tests");
-  assert.deepEqual(result.walk.slice(1), HARDENING_PHASES);
+  assert.ok(result.walk.includes("Standards"));
+});
+
+test("--no-standards skips the living CODING_STANDARDS.md step", () => {
+  assert.equal(shouldUpdateStandards("add export --no-standards"), false);
+  const result = runCycle({
+    args: "add export --no-grill --no-plan --ticket T-1 --no-standards",
+    decide: alwaysAdvance,
+  });
+  assert.equal(result.walk.includes("Standards"), false);
+  assert.equal(result.launch.update_standards, false);
 });
 
 test("return from Code review replays Development then every later phase in order", () => {
   const result = runCycle({
-    args: { task: "add export", no_plan: true, ticket: "T-9" },
+    args: { task: "add export", no_plan: true, ticket: "T-9", grill: false },
     decide: bounceOn("Code review", 1),
   });
   assert.equal(result.status, "complete");
@@ -88,7 +126,7 @@ test("return from Code review replays Development then every later phase in orde
 test("return from Cleaner, Testing, Final QA Review, or Pipeline all restart at Development", () => {
   for (const gate of ["Cleaner", "Testing", "Final QA Review", "Pipeline monitoring"]) {
     const result = runCycle({
-      args: { task: "fix", no_plan: true, plan: "existing plan" },
+      args: { task: "fix", no_plan: true, plan: "existing plan", grill: false },
       decide: bounceOn(gate, 1),
     });
     assert.equal(walkHasNoSkipReplay(result.walk), true, gate);
@@ -100,7 +138,7 @@ test("return from Cleaner, Testing, Final QA Review, or Pipeline all restart at 
 
 test("max-cycle stop fires instead of looping forever", () => {
   const result = runCycle({
-    args: { task: "fix", no_plan: true, ticket: "T-1" },
+    args: { task: "fix", no_plan: true, ticket: "T-1", grill: false },
     maxCycles: 2,
     decide: (phase) =>
       phase === "Cleaner"
@@ -112,11 +150,12 @@ test("max-cycle stop fires instead of looping forever", () => {
   const developments = result.walk.filter((phase) => phase === "Development").length;
   assert.equal(developments, 2);
   assert.equal(result.walk.includes("Pipeline monitoring"), false);
+  assert.equal(result.walk.includes("Standards"), false);
 });
 
 test("a failed gate (null verdict) returns to Development", () => {
   const result = runCycle({
-    args: { task: "fix", no_plan: true, ticket: "T-1" },
+    args: { task: "fix", no_plan: true, ticket: "T-1", grill: false },
     decide: (phase, cycle) => {
       if (phase === "Testing" && cycle === 1) {
         return null;
@@ -162,10 +201,12 @@ test("workflow script declares the same phase titles and the no-skip loop", () =
     assert.match(source, new RegExp(`phase\\("${title}"\\)`));
   }
   assert.match(source, /no_plan/);
+  assert.match(source, /no-grill/);
   assert.match(source, /MAX_CYCLES/);
   assert.match(source, /return_to_dev/);
   assert.match(source, /CODING_STANDARDS\.md/);
   assert.match(source, /grill-me/);
+  assert.match(source, /update_standards/);
   assert.doesNotMatch(source, /React Native/);
   assert.doesNotMatch(source, /npx nx/);
   assert.doesNotMatch(source, /Jira MCP/);

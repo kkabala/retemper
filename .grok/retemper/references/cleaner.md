@@ -11,6 +11,7 @@ Improve the design without changing behaviour.
 
 ## Return to Development when
 
+- Commit your work frequently - small, coheret commits
 - The design is wrong, not merely messy (acceptance tests cannot be met by cleanup).
 - Tests fail and the fix needs new behaviour, not a rename.
 - You would have to rewrite the feature to make it honest.
