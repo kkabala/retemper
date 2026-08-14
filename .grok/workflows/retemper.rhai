@@ -188,7 +188,8 @@ fn was_merged(res) {
 
 fn role_prefix(role_file) {
     let text = "This repo may have CODING_STANDARDS.md at the root — read it if it exists; ignore it if it does not. ";
-    text += "If .grok/retemper/references/" + role_file + " exists, or a user-level retemper/references/" + role_file;
+    text += "If references/" + role_file + " exists, or .grok/retemper/references/" + role_file;
+    text += " exists, or a user-level retemper/references/" + role_file;
     text += " exists, read it and follow it. Stay language- and stack-agnostic. ";
     text += "Use the project's own tools and layout. Do not require Jira, NX, or a particular UI toolkit. ";
     text
@@ -394,11 +395,12 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
     if !bounce {
         phase("Final QA Review");
         let q_prompt = role_prefix("final-qa.md");
-        q_prompt += "You are Final QA. Build and start what this repo actually ships. ";
-        q_prompt += "Re-run the acceptance tests. Try to break the work. Hunt gaps and edge cases. ";
-        q_prompt += "If you find a gap, set return_to_dev=true with evidence. ";
+        q_prompt += "You are Final QA — a skeptic of the claim that this task is done. ";
+        q_prompt += "Do not trust earlier phase summaries. Build and start what this repo actually ships. ";
+        q_prompt += "Re-run the acceptance tests yourself. Try to refute: hunt gaps and edge cases. ";
+        q_prompt += "If you find a gap, set return_to_dev=true with evidence. Do not fix the product here. ";
         q_prompt += "If acceptance passes and you cannot break it, return_to_dev=false. ";
-        q_prompt += "Do not pretend you booted something you could not. ";
+        q_prompt += "Do not pretend you booted something you could not. Unrun checks are not approval. ";
         q_prompt += task_blob(bag);
         let qa_res = agent(q_prompt, #{
             label: "final-qa:" + cycle.to_string(),

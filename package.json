@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Project-agnostic Grok Build workflow: plan, accept, build, harden, review, QA, PR — no skipped gates.",
+  "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build and Codex.",
   "bin": {
     "retemper-install": "./install.mjs"
   },
   "scripts": {
-    "test": "node --test tests/cycle.test.mjs",
+    "test": "node --test tests/*.test.mjs",
     "install:user": "node install.mjs --platform grok --scope user",
-    "install:user:dry": "node install.mjs --dry-run --platform grok --scope user"
+    "install:user:dry": "node install.mjs --dry-run --platform grok --scope user",
+    "install:user:codex": "node install.mjs --platform codex --scope user",
+    "install:user:codex:dry": "node install.mjs --dry-run --platform codex --scope user"
   }
 }

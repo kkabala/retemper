@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -16,6 +16,7 @@ import {
   shouldUpdateStandards,
   walkHasNoSkipReplay,
 } from "../lib/cycle.mjs";
+import { planInstall } from "../install.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const rhaiPath = join(root, ".grok", "workflows", "retemper.rhai");
@@ -168,7 +169,9 @@ test("a failed gate (null verdict) returns to Development", () => {
 });
 
 test("role references stay stack-agnostic and match the named sources", () => {
-  const refs = join(root, ".grok", "retemper", "references");
+  const refs = planInstall({ platform: "grok", scope: "user" }).refsSrc;
+  assert.equal(existsSync(refs), true);
+  assert.doesNotMatch(refs, /\.grok[/\\]retemper[/\\]references/);
   const architect = readFileSync(join(refs, "architect.md"), "utf8");
   const developer = readFileSync(join(refs, "developer.md"), "utf8");
   const tester = readFileSync(join(refs, "tester.md"), "utf8");
@@ -191,7 +194,14 @@ test("role references stay stack-agnostic and match the named sources", () => {
   assert.match(tester, /Missing tests are blockers/);
   assert.match(reviewer, /Missing tests are blockers/);
   assert.match(finalQa, /acceptance tests/i);
+  assert.match(finalQa, /skeptic/i);
+  assert.match(finalQa, /refute/i);
+  assert.match(finalQa, /Do not trust/);
   assert.doesNotMatch(reviewer, /Jira MCP/);
+
+  const pipeline = readFileSync(join(refs, "pipeline.md"), "utf8");
+  assert.match(pipeline, /Never invent a green build/);
+  assert.doesNotMatch(pipeline, /\/workflow resume retemper/);
 });
 
 test("workflow script declares the same phase titles and the no-skip loop", () => {

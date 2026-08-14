@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Retemper installer — Grok Build only for now.
+ * Retemper installer — Grok Build workflows and Codex Agent Skills.
  *
  *   node install.mjs --help
  *   node install.mjs --dry-run --platform grok --scope user
  *   node install.mjs --platform grok --scope user
  *   node install.mjs --platform grok --scope project --target /path/to/repo
+ *   node install.mjs --dry-run --platform codex --scope user
+ *   node install.mjs --platform codex --scope project --target /path/to/repo
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -15,9 +17,9 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const NAME = "retemper";
-const SUPPORTED_PLATFORMS = ["grok"];
-const SUPPORTED_SCOPES = ["user", "project"];
+export const NAME = "retemper";
+export const SUPPORTED_PLATFORMS = ["grok", "codex"];
+export const SUPPORTED_SCOPES = ["user", "project"];
 
 const GRILL_FETCH = [
   "npx",
@@ -33,7 +35,7 @@ const GRILL_FETCH = [
   "--copy",
 ];
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const out = {
     help: false,
     dryRun: false,
@@ -58,25 +60,32 @@ function parseArgs(argv) {
   return out;
 }
 
-function helpText() {
+export function helpText() {
   return [
     "retemper installer",
     "",
     "A project-agnostic plan → accept → build → harden → review → QA → PR cycle.",
-    "Platform support today: grok (Grok Build workflows).",
+    "Platforms: grok (Grok Build workflow) and codex (Codex Agent Skill).",
     "",
     "Usage:",
     "  node install.mjs --platform grok --scope user [--dry-run] [--skip-deps]",
     "  node install.mjs --platform grok --scope project --target <repo> [--standards]",
+    "  node install.mjs --platform codex --scope user [--dry-run] [--skip-deps]",
+    "  node install.mjs --platform codex --scope project --target <repo> [--standards]",
     "",
     "Options:",
-    "  --platform grok          Only grok is implemented (Claude/Codex/Copilot later)",
-    "  --scope user|project     user → ~/.grok/workflows   project → <repo>/.grok/workflows",
+    "  --platform grok|codex    grok → .rhai workflow under ~/.grok; codex → SKILL.md under ~/.agents/skills",
+    "  --scope user|project     grok user → ~/.grok/workflows   grok project → <repo>/.grok/workflows",
+    "                           codex user → ~/.agents/skills   codex project → <repo>/.agents/skills",
     "  --target <dir>           Required for --scope project",
     "  --dry-run                Print the plan, including the grill-me dependency step",
     "  --skip-deps              Do not fetch Matt Pocock grill-me / grilling",
     "  --standards              Copy templates/CODING_STANDARDS.md into the project root if missing",
     "  --help                   This text",
+    "",
+    "Launch after install:",
+    "  grok:  /workflow retemper <task>     (or /retemper)",
+    "  codex: $retemper <task>              (or pick retemper from /skills)",
     "",
     "Dependencies:",
     "  grill-me  (mattpocock/skills) — front door; body is “run a grilling session”",
@@ -86,26 +95,25 @@ function helpText() {
   ].join("\n");
 }
 
-function grokHome() {
+export function grokHome() {
   return process.env.GROK_HOME ? resolve(process.env.GROK_HOME) : join(homedir(), ".grok");
 }
 
-function planInstall(opts) {
-  if (!SUPPORTED_PLATFORMS.includes(opts.platform)) {
-    throw new Error(
-      `Unsupported platform "${opts.platform || "(missing)"}". Pick platform=grok.`,
-    );
-  }
-  if (!SUPPORTED_SCOPES.includes(opts.scope)) {
-    throw new Error(`Unsupported scope "${opts.scope || "(missing)"}". Pick scope=user or scope=project.`);
-  }
+export function agentsHome() {
+  return join(homedir(), ".agents");
+}
 
+function sharedSources() {
+  return {
+    refsSrc: join(here, "references"),
+    vendorGrillMe: join(here, "vendor", "grill-me"),
+    vendorGrilling: join(here, "vendor", "grilling"),
+    standardsSrc: join(here, "templates", "CODING_STANDARDS.md"),
+  };
+}
+
+function planGrok(opts, sources) {
   const workflowSrc = join(here, ".grok", "workflows", `${NAME}.rhai`);
-  const refsSrc = join(here, ".grok", "retemper", "references");
-  const vendorGrillMe = join(here, "vendor", "grill-me");
-  const vendorGrilling = join(here, "vendor", "grilling");
-  const standardsSrc = join(here, "templates", "CODING_STANDARDS.md");
-
   if (opts.scope === "user") {
     const home = grokHome();
     return {
@@ -113,14 +121,16 @@ function planInstall(opts) {
       scope: "user",
       workflowSrc,
       workflowDest: join(home, "workflows", `${NAME}.rhai`),
-      refsSrc,
+      skillSrc: null,
+      skillDest: null,
+      refsSrc: sources.refsSrc,
       refsDest: join(home, "retemper", "references"),
       skillDests: [
         join(home, "skills", "grill-me"),
         join(home, "skills", "grilling"),
       ],
-      vendorSkills: [vendorGrillMe, vendorGrilling],
-      standardsSrc,
+      vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+      standardsSrc: sources.standardsSrc,
       standardsDest: null,
       fetchArgs: [...GRILL_FETCH, "--global"],
     };
@@ -132,29 +142,97 @@ function planInstall(opts) {
     scope: "project",
     workflowSrc,
     workflowDest: join(target, ".grok", "workflows", `${NAME}.rhai`),
-    refsSrc,
+    skillSrc: null,
+    skillDest: null,
+    refsSrc: sources.refsSrc,
     refsDest: join(target, ".grok", "retemper", "references"),
     skillDests: [
       join(target, ".grok", "skills", "grill-me"),
       join(target, ".grok", "skills", "grilling"),
     ],
-    vendorSkills: [vendorGrillMe, vendorGrilling],
-    standardsSrc,
+    vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+    standardsSrc: sources.standardsSrc,
     standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
     fetchArgs: [...GRILL_FETCH],
   };
 }
 
-function describe(plan, opts) {
-  const lines = [
-    `platform=${plan.platform}`,
-    `scope=${plan.scope}`,
-    `workflow: ${plan.workflowSrc} → ${plan.workflowDest}`,
-    `references: ${plan.refsSrc} → ${plan.refsDest}`,
-    `grill-me dependency step: ${plan.fetchArgs.join(" ")}`,
-    `grill-me vendor fallback: ${plan.vendorSkills[0]} → ${plan.skillDests[0]}`,
-    `grilling vendor fallback: ${plan.vendorSkills[1]} → ${plan.skillDests[1]}`,
-  ];
+function planCodex(opts, sources) {
+  const skillSrc = join(here, ".agents", "skills", NAME);
+  if (opts.scope === "user") {
+    const home = agentsHome();
+    const skillDest = join(home, "skills", NAME);
+    return {
+      platform: "codex",
+      scope: "user",
+      workflowSrc: null,
+      workflowDest: null,
+      skillSrc,
+      skillDest,
+      refsSrc: sources.refsSrc,
+      refsDest: join(skillDest, "references"),
+      skillDests: [
+        join(home, "skills", "grill-me"),
+        join(home, "skills", "grilling"),
+      ],
+      vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+      standardsSrc: sources.standardsSrc,
+      standardsDest: null,
+      fetchArgs: [...GRILL_FETCH, "--global"],
+    };
+  }
+
+  const target = resolve(opts.target || process.cwd());
+  const skillDest = join(target, ".agents", "skills", NAME);
+  return {
+    platform: "codex",
+    scope: "project",
+    workflowSrc: null,
+    workflowDest: null,
+    skillSrc,
+    skillDest,
+    refsSrc: sources.refsSrc,
+    refsDest: join(skillDest, "references"),
+    skillDests: [
+      join(target, ".agents", "skills", "grill-me"),
+      join(target, ".agents", "skills", "grilling"),
+    ],
+    vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+    standardsSrc: sources.standardsSrc,
+    standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
+    fetchArgs: [...GRILL_FETCH],
+  };
+}
+
+export function planInstall(opts) {
+  if (!SUPPORTED_PLATFORMS.includes(opts.platform)) {
+    throw new Error(
+      `Unsupported platform "${opts.platform || "(missing)"}". Pick platform=grok or platform=codex.`,
+    );
+  }
+  if (!SUPPORTED_SCOPES.includes(opts.scope)) {
+    throw new Error(`Unsupported scope "${opts.scope || "(missing)"}". Pick scope=user or scope=project.`);
+  }
+
+  const sources = sharedSources();
+  if (opts.platform === "codex") {
+    return planCodex(opts, sources);
+  }
+  return planGrok(opts, sources);
+}
+
+export function describe(plan, opts) {
+  const lines = [`platform=${plan.platform}`, `scope=${plan.scope}`];
+  if (plan.workflowDest) {
+    lines.push(`workflow: ${plan.workflowSrc} → ${plan.workflowDest}`);
+  }
+  if (plan.skillDest) {
+    lines.push(`skill: ${plan.skillSrc} → ${plan.skillDest}`);
+  }
+  lines.push(`references: ${plan.refsSrc} → ${plan.refsDest}`);
+  lines.push(`grill-me dependency step: ${plan.fetchArgs.join(" ")}`);
+  lines.push(`grill-me vendor fallback: ${plan.vendorSkills[0]} → ${plan.skillDests[0]}`);
+  lines.push(`grilling vendor fallback: ${plan.vendorSkills[1]} → ${plan.skillDests[1]}`);
   if (plan.standardsDest) {
     lines.push(`CODING_STANDARDS.md: ${plan.standardsSrc} → ${plan.standardsDest} (if missing)`);
   }
@@ -172,9 +250,14 @@ function copyDir(src, dest) {
   cpSync(src, dest, { recursive: true });
 }
 
-function apply(plan, opts) {
-  mkdirSync(dirname(plan.workflowDest), { recursive: true });
-  writeFileSync(plan.workflowDest, readFileSync(plan.workflowSrc));
+export function apply(plan, opts) {
+  if (plan.workflowSrc && plan.workflowDest) {
+    mkdirSync(dirname(plan.workflowDest), { recursive: true });
+    writeFileSync(plan.workflowDest, readFileSync(plan.workflowSrc));
+  }
+  if (plan.skillSrc && plan.skillDest) {
+    copyDir(plan.skillSrc, plan.skillDest);
+  }
   copyDir(plan.refsSrc, plan.refsDest);
   for (let i = 0; i < plan.skillDests.length; i += 1) {
     copyDir(plan.vendorSkills[i], plan.skillDests[i]);
@@ -195,27 +278,48 @@ function apply(plan, opts) {
   }
 }
 
-function main() {
-  const opts = parseArgs(process.argv);
+function payloadPath(plan) {
+  return plan.skillSrc || plan.workflowSrc;
+}
+
+function isCli() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return resolve(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+export function main(argv = process.argv) {
+  const opts = parseArgs(argv);
   if (opts.help || (!opts.platform && !opts.scope)) {
     console.log(helpText());
-    process.exit(0);
+    return 0;
   }
   const plan = planInstall(opts);
   console.log(describe(plan, opts));
   if (opts.dryRun) {
-    return;
+    return 0;
   }
-  if (!existsSync(plan.workflowSrc)) {
-    throw new Error(`Missing workflow definition: ${plan.workflowSrc}`);
+  const payload = payloadPath(plan);
+  if (!payload || !existsSync(payload)) {
+    throw new Error(`Missing install payload: ${payload || "(none)"}`);
   }
   apply(plan, opts);
   console.log(`installed ${NAME} (${plan.scope})`);
+  return 0;
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
+if (isCli()) {
+  try {
+    const code = main();
+    if (typeof code === "number" && code !== 0) {
+      process.exit(code);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }
