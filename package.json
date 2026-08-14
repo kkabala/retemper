@@ -1,0 +1,15 @@
+{
+  "name": "retemper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Project-agnostic Grok Build workflow: plan, accept, build, harden, review, QA, PR — no skipped gates.",
+  "bin": {
+    "retemper-install": "./install.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/cycle.test.mjs",
+    "install:user": "node install.mjs --platform grok --scope user",
+    "install:user:dry": "node install.mjs --dry-run --platform grok --scope user"
+  }
+}
