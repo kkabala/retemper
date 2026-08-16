@@ -57,8 +57,6 @@ $retemper Add CSV export --no-grill
 $retemper Add CSV export --no-standards
 ```
 
-`/retemper` is not the documented skill mention. Codex `/` commands are session actions (`/skills`, `/review`, `/model`). Skills are `$name` (same as `$skill-creator` / `$skill-installer` in the official docs). On some Codex surfaces an enabled skill also shows up in the `/` picker — use that if you see it — but `$retemper` is the portable form.
-
 | Intent | Flag | JSON |
 | --- | --- | --- |
 | Don’t write a new plan (still grill) | `--no-plan` + `--ticket ID` | `no_plan: true`, `ticket` or `plan` |
