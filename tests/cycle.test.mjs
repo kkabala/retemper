@@ -20,6 +20,7 @@ import { planInstall } from "../install.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const rhaiPath = join(root, ".grok", "workflows", "retemper.rhai");
+const skillPath = join(root, ".agents", "skills", "retemper", "SKILL.md");
 
 function alwaysAdvance() {
   return { return_to_dev: false, evidence: "ok" };
@@ -201,7 +202,30 @@ test("role references stay stack-agnostic and match the named sources", () => {
 
   const pipeline = readFileSync(join(refs, "pipeline.md"), "utf8");
   assert.match(pipeline, /Never invent a green build/);
-  assert.doesNotMatch(pipeline, /\/workflow resume retemper/);
+  assert.match(pipeline, /wait on the real status/i);
+  assert.match(pipeline, /gh run watch --exit-status/);
+  assert.match(pipeline, /sleep 300/);
+  assert.match(pipeline, /Do not set `needs_user` merely because/);
+  assert.doesNotMatch(pipeline, /\/workflow resume/);
+  assert.doesNotMatch(pipeline, /\$retemper/);
+  assert.doesNotMatch(pipeline, /Do not invent a wait by looping, sleeping/);
+});
+
+test("Grok workflow and Codex skill both wait on real CI before needs_user", () => {
+  const rhai = readFileSync(rhaiPath, "utf8");
+  const skill = readFileSync(skillPath, "utf8");
+
+  assert.match(rhai, /wait on its real status until it is terminal/);
+  assert.match(rhai, /gh run watch --exit-status/);
+  assert.match(rhai, /sleep 300/);
+  assert.match(rhai, /Do not set needs_user merely because CI is still running/);
+  assert.match(rhai, /await_user/);
+
+  assert.match(skill, /Wait on the \*\*real\*\* CI status/);
+  assert.match(skill, /5-minute recheck/);
+  assert.match(skill, /Follow `references\/pipeline\.md`/);
+  assert.doesNotMatch(skill, /Never busy-loop/);
+  assert.doesNotMatch(skill, /\/workflow resume retemper/);
 });
 
 test("workflow script declares the same phase titles and the no-skip loop", () => {
@@ -217,6 +241,7 @@ test("workflow script declares the same phase titles and the no-skip loop", () =
   assert.match(source, /CODING_STANDARDS\.md/);
   assert.match(source, /grill-me/);
   assert.match(source, /update_standards/);
+  assert.match(source, /wait on its real status until it is terminal/);
   assert.doesNotMatch(source, /React Native/);
   assert.doesNotMatch(source, /npx nx/);
   assert.doesNotMatch(source, /Jira MCP/);

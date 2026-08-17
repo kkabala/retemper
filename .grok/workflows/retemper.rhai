@@ -10,7 +10,7 @@ let meta = #{
         #{ title: "Testing", detail: "manual gaps; automate what was missed" },
         #{ title: "Code review", detail: "diff review; missing tests are blockers" },
         #{ title: "Final QA Review", detail: "boot, re-run acceptance, try to break it" },
-        #{ title: "Pipeline monitoring", detail: "open PR; pause until CI is actually done" },
+        #{ title: "Pipeline monitoring", detail: "open PR; wait on real CI; pause only if the wait cannot finish" },
         #{ title: "Standards", detail: "living CODING_STANDARDS.md unless turned off" },
     ],
 };
@@ -419,11 +419,13 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         phase("Pipeline monitoring");
         let i_prompt = role_prefix("pipeline.md");
         i_prompt += "Final QA approved. Open a pull request (or this repo's equivalent). ";
-        i_prompt += "If a pipeline exists, use its real status. Merge only on a real green signal. ";
-        i_prompt += "If CI failed because of code, set return_to_dev=true with the first real error. ";
-        i_prompt += "If there is no pipeline, or CI is still running (15-minute jobs are normal), set needs_user=true and do not merge. ";
-        i_prompt += "The workflow will pause; the human resumes it when CI is done. That is how we wait — do not busy-loop. ";
-        i_prompt += "Never invent a green build. ";
+        i_prompt += "If a pipeline exists, wait on its real status until it is terminal. ";
+        i_prompt += "Prefer a blocking watch (gh run watch --exit-status or the host equivalent) with a long command timeout (at least 45 minutes). ";
+        i_prompt += "If there is no watch, recheck every 5 minutes (sleep 300) until green or failed. ";
+        i_prompt += "Merge only on a real green signal. If CI failed because of code, set return_to_dev=true with the first real error. ";
+        i_prompt += "Do not set needs_user merely because CI is still running — wait first. ";
+        i_prompt += "Set needs_user=true only when there is no pipeline, the wait failed or timed out, or merge needs a human. ";
+        i_prompt += "Never invent a green build. Never merge on silence. A missing or unknown status is not green. ";
         i_prompt += task_blob(bag);
         let pi_res = agent(i_prompt, #{
             label: "pipeline:" + cycle.to_string(),
@@ -436,7 +438,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
             if pi_res != () && is_map(pi_res.output) { last_reason = trimmed(pi_res.output.reason) + " " + trimmed(pi_res.output.evidence); }
             else { last_reason = "Pipeline returned no usable verdict"; }
         } else if needs_human(pi_res) {
-            await_user("user", "CI is missing or still running (often 10–20 minutes). When it finishes, run /workflow resume retemper — or say that it failed.");
+            await_user("user", "CI wait could not finish (no pipeline, watch failed or timed out, or merge needs a human). When CI is terminal, run /workflow resume retemper — or say that it failed.");
             let pi2 = agent(i_prompt + " The user resumed after a CI gate. Re-check status and merge only if green.", #{
                 label: "pipeline-recheck:" + cycle.to_string(),
                 capability_mode: "all",
