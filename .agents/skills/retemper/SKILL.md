@@ -104,15 +104,15 @@ stop. Do not run Standards after a max-cycles stop.
 
 ## Waiting on CI
 
-After you open the PR, check the **real** CI status once.
+Follow `references/pipeline.md`. Wait on the **real** CI status (blocking
+watch, or a 5-minute recheck) until it is terminal, then merge or return to
+Development. Never invent a green build. Never prescribe a Grok workflow
+resume command.
 
-- Green → merge using the repo’s normal method (or leave merge to the human if
-  the repo requires it).
-- Code-caused failure → return to Development with the first real error.
-- Still running, no pipeline, or a human must merge → **stop**. Tell the human
-  to continue / re-invoke `$retemper` (or `/skills` → retemper) after CI
-  finishes, then **re-check the real status**. Never invent a green build.
-  Never busy-loop. Never prescribe a Grok workflow resume command.
+Set `needs_user` only when pipeline.md says to (no pipeline, wait failed or
+timed out, or merge needs a human). Then **stop**. Tell the human to continue /
+re-invoke `$retemper` (or `/skills` → retemper) after CI finishes, then
+**re-check the real status**.
 
 When they continue after a CI stop, resume at **Pipeline monitoring**. Re-check
 once. Then merge or return to Development.

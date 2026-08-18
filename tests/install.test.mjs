@@ -244,6 +244,8 @@ test("CLI --skip-deps Codex project install writes SKILL.md plus grill skills", 
       "utf8",
     );
     assert.doesNotMatch(pipeline, /\/workflow resume retemper/);
+    assert.match(pipeline, /wait on the real status/i);
+    assert.match(pipeline, /sleep 300/);
     assert.equal(existsSync(join(target, ".grok", "workflows", "retemper.rhai")), false);
     assert.equal(existsSync(join(target, ".codex", "prompts")), false);
 
