@@ -2,6 +2,7 @@
   "name": "retemper",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build and Codex.",
   "bin": {
