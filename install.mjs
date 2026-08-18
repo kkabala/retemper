@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 /**
- * Retemper installer — Grok Build workflows and Codex Agent Skills.
+ * Retemper installer — Grok Build workflows and a shared Agent Skill.
  *
  *   node install.mjs --help
  *   node install.mjs --dry-run --platform grok --scope user
  *   node install.mjs --platform grok --scope user
  *   node install.mjs --platform grok --scope project --target /path/to/repo
  *   node install.mjs --dry-run --platform codex --scope user
- *   node install.mjs --platform codex --scope project --target /path/to/repo
+ *   node install.mjs --platform copilot --scope project --target /path/to/repo
+ *
+ * Codex and GitHub Copilot install the same SKILL.md tree under .agents/skills
+ * (official discovery root for both). There is no second copy under
+ * .github/skills or ~/.copilot/skills.
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,7 +22,8 @@ import { spawnSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const NAME = "retemper";
-export const SUPPORTED_PLATFORMS = ["grok", "codex"];
+export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot"];
+export const SKILL_PLATFORMS = ["codex", "copilot"];
 export const SUPPORTED_SCOPES = ["user", "project"];
 
 const GRILL_FETCH = [
@@ -65,18 +70,20 @@ export function helpText() {
     "retemper installer",
     "",
     "A project-agnostic plan → accept → build → harden → review → QA → PR cycle.",
-    "Platforms: grok (Grok Build workflow) and codex (Codex Agent Skill).",
+    "Platforms: grok (Grok Build workflow); codex and copilot (shared Agent Skill).",
     "",
     "Usage:",
     "  node install.mjs --platform grok --scope user [--dry-run] [--skip-deps]",
     "  node install.mjs --platform grok --scope project --target <repo> [--standards]",
     "  node install.mjs --platform codex --scope user [--dry-run] [--skip-deps]",
-    "  node install.mjs --platform codex --scope project --target <repo> [--standards]",
+    "  node install.mjs --platform copilot --scope project --target <repo> [--standards]",
     "",
     "Options:",
-    "  --platform grok|codex    grok → .rhai workflow under ~/.grok; codex → SKILL.md under ~/.agents/skills",
+    "  --platform grok|codex|copilot",
+    "                           grok → .rhai workflow under ~/.grok",
+    "                           codex and copilot → same SKILL.md under .agents/skills",
     "  --scope user|project     grok user → ~/.grok/workflows   grok project → <repo>/.grok/workflows",
-    "                           codex user → ~/.agents/skills   codex project → <repo>/.agents/skills",
+    "                           skill user → ~/.agents/skills   skill project → <repo>/.agents/skills",
     "  --target <dir>           Required for --scope project",
     "  --dry-run                Print the plan, including the grill-me dependency step",
     "  --skip-deps              Do not fetch Matt Pocock grill-me / grilling",
@@ -84,8 +91,9 @@ export function helpText() {
     "  --help                   This text",
     "",
     "Launch after install:",
-    "  grok:  /workflow retemper <task>     (or /retemper)",
-    "  codex: $retemper <task>              (or pick retemper from /skills)",
+    "  grok:    /workflow retemper <task>     (or /retemper)",
+    "  codex:   $retemper <task>              (or pick retemper from /skills)",
+    "  copilot: /retemper <task>              (or pick retemper from /skills)",
     "",
     "Dependencies:",
     "  grill-me  (mattpocock/skills) — front door; body is “run a grilling session”",
@@ -157,13 +165,13 @@ function planGrok(opts, sources) {
   };
 }
 
-function planCodex(opts, sources) {
+function planSkillPlatform(platform, opts, sources) {
   const skillSrc = join(here, ".agents", "skills", NAME);
   if (opts.scope === "user") {
     const home = agentsHome();
     const skillDest = join(home, "skills", NAME);
     return {
-      platform: "codex",
+      platform,
       scope: "user",
       workflowSrc: null,
       workflowDest: null,
@@ -185,7 +193,7 @@ function planCodex(opts, sources) {
   const target = resolve(opts.target || process.cwd());
   const skillDest = join(target, ".agents", "skills", NAME);
   return {
-    platform: "codex",
+    platform,
     scope: "project",
     workflowSrc: null,
     workflowDest: null,
@@ -207,7 +215,7 @@ function planCodex(opts, sources) {
 export function planInstall(opts) {
   if (!SUPPORTED_PLATFORMS.includes(opts.platform)) {
     throw new Error(
-      `Unsupported platform "${opts.platform || "(missing)"}". Pick platform=grok or platform=codex.`,
+      `Unsupported platform "${opts.platform || "(missing)"}". Pick platform=grok, platform=codex, or platform=copilot.`,
     );
   }
   if (!SUPPORTED_SCOPES.includes(opts.scope)) {
@@ -215,8 +223,8 @@ export function planInstall(opts) {
   }
 
   const sources = sharedSources();
-  if (opts.platform === "codex") {
-    return planCodex(opts, sources);
+  if (SKILL_PLATFORMS.includes(opts.platform)) {
+    return planSkillPlatform(opts.platform, opts, sources);
   }
   return planGrok(opts, sources);
 }

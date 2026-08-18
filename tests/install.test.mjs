@@ -14,6 +14,8 @@ import {
   helpText,
   parseArgs,
   planInstall,
+  SKILL_PLATFORMS,
+  SUPPORTED_PLATFORMS,
 } from "../install.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,7 +29,7 @@ function cli(args) {
   });
 }
 
-test("parseArgs accepts the same flags for grok and codex", () => {
+test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
   const grok = parseArgs([
     "node",
     "install.mjs",
@@ -66,16 +68,33 @@ test("parseArgs accepts the same flags for grok and codex", () => {
   assert.equal(codex.standards, true);
   assert.equal(grok.target, "/repo");
   assert.equal(codex.target, "/repo");
+
+  const copilot = parseArgs([
+    "node",
+    "install.mjs",
+    "--platform",
+    "copilot",
+    "--scope",
+    "user",
+    "--dry-run",
+  ]);
+  assert.equal(copilot.platform, "copilot");
+  assert.equal(copilot.scope, "user");
+  assert.equal(copilot.dryRun, true);
 });
 
-test("help names grok and codex and does not say only grok is implemented", () => {
+test("help names grok, codex, and copilot and does not say only grok is implemented", () => {
   const text = helpText();
   assert.match(text, /\bgrok\b/);
   assert.match(text, /\bcodex\b/);
+  assert.match(text, /\bcopilot\b/);
   assert.match(text, /\$retemper/);
+  assert.match(text, /\/retemper/);
   assert.match(text, /\/skills/);
+  assert.match(text, /\.agents[/\\]?skills/);
   assert.doesNotMatch(text, /Only grok is implemented/i);
   assert.doesNotMatch(text, /Claude\/Codex\/Copilot later/);
+  assert.doesNotMatch(text, /later port/i);
 });
 
 test("planInstall accepts codex and keeps grok destinations unchanged", () => {
@@ -132,19 +151,54 @@ test("planInstall routes Codex user and project dests under .agents/skills", () 
 });
 
 test("planInstall rejects unknown platforms", () => {
-  assert.throws(() => planInstall({ platform: "claude", scope: "user" }), /codex/);
+  assert.throws(() => planInstall({ platform: "claude", scope: "user" }), /copilot/);
+  assert.deepEqual(SUPPORTED_PLATFORMS, ["grok", "codex", "copilot"]);
+  assert.deepEqual(SKILL_PLATFORMS, ["codex", "copilot"]);
 });
 
-test("grok and Codex plans share one platform-neutral refsSrc", () => {
+test("codex and copilot share one skill source and the same .agents/skills dests", () => {
+  const target = "/does-not-exist/retemper-skill-proj";
+  const codexUser = planInstall({ platform: "codex", scope: "user" });
+  const copilotUser = planInstall({ platform: "copilot", scope: "user" });
+  const codexProject = planInstall({ platform: "codex", scope: "project", target });
+  const copilotProject = planInstall({ platform: "copilot", scope: "project", target });
+
+  assert.equal(codexUser.skillSrc, copilotUser.skillSrc);
+  assert.equal(codexUser.skillSrc, join(root, ".agents", "skills", "retemper"));
+  assert.equal(codexUser.skillDest, copilotUser.skillDest);
+  assert.equal(codexUser.refsDest, copilotUser.refsDest);
+  assert.deepEqual(codexUser.skillDests, copilotUser.skillDests);
+  assert.equal(codexProject.skillDest, copilotProject.skillDest);
+  assert.equal(codexProject.refsDest, copilotProject.refsDest);
+  assert.notEqual(codexUser.platform, copilotUser.platform);
+
+  for (const plan of [copilotUser, copilotProject]) {
+    assert.equal(plan.workflowDest, null);
+    assert.ok(plan.skillDest.includes(join(".agents", "skills")));
+    assert.doesNotMatch(plan.skillDest, /\.github[/\\]skills/);
+    assert.doesNotMatch(plan.skillDest, /\.copilot[/\\]/);
+    assert.doesNotMatch(plan.skillSrc, /\.github[/\\]/);
+  }
+});
+
+test("the repo ships one retemper SKILL.md, under .agents/skills", () => {
+  assert.equal(existsSync(skillSource), true);
+  assert.equal(existsSync(join(root, ".github", "skills", "retemper", "SKILL.md")), false);
+  assert.equal(existsSync(join(root, ".copilot", "skills", "retemper", "SKILL.md")), false);
+});
+
+test("grok, Codex, and Copilot plans share one platform-neutral refsSrc", () => {
   const grok = planInstall({ platform: "grok", scope: "user" });
   const codexUser = planInstall({ platform: "codex", scope: "user" });
-  const codexProject = planInstall({
-    platform: "codex",
+  const copilotUser = planInstall({ platform: "copilot", scope: "user" });
+  const copilotProject = planInstall({
+    platform: "copilot",
     scope: "project",
-    target: "/does-not-exist/retemper-codex-proj",
+    target: "/does-not-exist/retemper-copilot-proj",
   });
   assert.equal(grok.refsSrc, codexUser.refsSrc);
-  assert.equal(grok.refsSrc, codexProject.refsSrc);
+  assert.equal(grok.refsSrc, copilotUser.refsSrc);
+  assert.equal(grok.refsSrc, copilotProject.refsSrc);
   assert.equal(grok.refsSrc, join(root, "references"));
   assert.doesNotMatch(grok.refsSrc, /\.grok[/\\]/);
   assert.equal(existsSync(join(grok.refsSrc, "architect.md")), true);
@@ -153,19 +207,21 @@ test("grok and Codex plans share one platform-neutral refsSrc", () => {
   assert.match(finalQa, /skeptic/i);
 });
 
-test("the shipped Codex payload is a SKILL.md with name and description", () => {
-  const plan = planInstall({ platform: "codex", scope: "user" });
-  const skillMd = join(plan.skillSrc, "SKILL.md");
-  assert.equal(skillMd, skillSource);
-  assert.equal(existsSync(skillMd), true);
-  const body = readFileSync(skillMd, "utf8");
-  assert.match(body, /^---\r?\n/);
-  assert.match(body, /^name:\s*retemper\s*$/m);
-  assert.match(body, /^description:\s*>?\s*$/m);
-  assert.doesNotMatch(plan.skillSrc, /\.rhai$/);
+test("the shipped skill payload is a SKILL.md with name and description", () => {
+  for (const platform of SKILL_PLATFORMS) {
+    const plan = planInstall({ platform, scope: "user" });
+    const skillMd = join(plan.skillSrc, "SKILL.md");
+    assert.equal(skillMd, skillSource);
+    assert.equal(existsSync(skillMd), true);
+    const body = readFileSync(skillMd, "utf8");
+    assert.match(body, /^---\r?\n/);
+    assert.match(body, /^name:\s*retemper\s*$/m);
+    assert.match(body, /^description:\s*>?\s*$/m);
+    assert.doesNotMatch(plan.skillSrc, /\.rhai$/);
+  }
 });
 
-test("shipped Codex skill states the cycle rules from PHASES and launch flags", () => {
+test("shipped skill states the cycle rules from PHASES and launch flags", () => {
   const body = readFileSync(skillSource, "utf8");
   for (const title of PHASES) {
     assert.match(body, new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -180,19 +236,25 @@ test("shipped Codex skill states the cycle rules from PHASES and launch flags", 
   assert.match(body, /no-skip replay/);
   assert.match(body, /max-cycles/);
   assert.match(body, /\$retemper/);
+  assert.match(body, /\/retemper/);
+  assert.match(body, /Copilot/);
   assert.match(body, /\/skills/);
   assert.doesNotMatch(body, /\/workflow resume retemper/);
 });
 
-test("describe(codex) names .agents/skills and does not use a .rhai payload", () => {
-  const plan = planInstall({ platform: "codex", scope: "user" });
-  const text = describe(plan, { dryRun: true, skipDeps: false });
-  assert.match(text, /platform=codex/);
-  assert.match(text, /\.agents[/\\]skills/);
-  assert.match(text, /retemper/);
-  assert.match(text, /grill-me/);
-  assert.match(text, /grilling/);
-  assert.doesNotMatch(text, /\.rhai/);
+test("describe(codex|copilot) names .agents/skills and does not use a .rhai payload", () => {
+  for (const platform of SKILL_PLATFORMS) {
+    const plan = planInstall({ platform, scope: "user" });
+    const text = describe(plan, { dryRun: true, skipDeps: false });
+    assert.match(text, new RegExp(`platform=${platform}`));
+    assert.match(text, /\.agents[/\\]skills/);
+    assert.match(text, /retemper/);
+    assert.match(text, /grill-me/);
+    assert.match(text, /grilling/);
+    assert.doesNotMatch(text, /\.rhai/);
+    assert.doesNotMatch(text, /\.github[/\\]skills/);
+    assert.doesNotMatch(text, /\.copilot[/\\]skills/);
+  }
 });
 
 test("CLI dry-run for Codex project prints dests and writes nothing", () => {
@@ -260,6 +322,62 @@ test("CLI --skip-deps Codex project install writes SKILL.md plus grill skills", 
     ]);
     assert.equal(second.status, 0, second.stderr);
     assert.match(second.stdout, /installed retemper/);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("CLI --skip-deps Copilot project install writes the shared .agents/skills tree", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-copilot-"));
+  try {
+    const result = cli([
+      "--platform",
+      "copilot",
+      "--scope",
+      "project",
+      "--target",
+      target,
+      "--skip-deps",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /platform=copilot/);
+    assert.match(result.stdout, /installed retemper/);
+
+    const skillMd = join(target, ".agents", "skills", "retemper", "SKILL.md");
+    assert.equal(existsSync(skillMd), true);
+    assert.equal(readFileSync(skillMd, "utf8"), readFileSync(skillSource, "utf8"));
+    assert.equal(existsSync(join(target, ".agents", "skills", "grill-me", "SKILL.md")), true);
+    assert.equal(existsSync(join(target, ".agents", "skills", "grilling", "SKILL.md")), true);
+    assert.equal(
+      existsSync(join(target, ".agents", "skills", "retemper", "references", "architect.md")),
+      true,
+    );
+    assert.equal(existsSync(join(target, ".github", "skills", "retemper", "SKILL.md")), false);
+    assert.equal(existsSync(join(target, ".copilot")), false);
+    assert.equal(existsSync(join(target, ".grok", "workflows", "retemper.rhai")), false);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("CLI dry-run for Copilot project prints dests and writes nothing", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-copilot-dry-"));
+  try {
+    const result = cli([
+      "--dry-run",
+      "--platform",
+      "copilot",
+      "--scope",
+      "project",
+      "--target",
+      target,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /platform=copilot/);
+    assert.match(result.stdout, /\.agents[/\\]skills/);
+    assert.doesNotMatch(result.stdout, /\.github[/\\]skills/);
+    assert.equal(existsSync(join(target, ".agents")), false);
+    assert.equal(existsSync(join(target, ".github")), false);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }

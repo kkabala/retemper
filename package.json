@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build and Codex.",
+  "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build, Codex, and GitHub Copilot.",
   "bin": {
     "retemper-install": "./install.mjs"
   },
@@ -13,6 +13,8 @@
     "install:user": "node install.mjs --platform grok --scope user",
     "install:user:dry": "node install.mjs --dry-run --platform grok --scope user",
     "install:user:codex": "node install.mjs --platform codex --scope user",
-    "install:user:codex:dry": "node install.mjs --dry-run --platform codex --scope user"
+    "install:user:codex:dry": "node install.mjs --dry-run --platform codex --scope user",
+    "install:user:copilot": "node install.mjs --platform copilot --scope user",
+    "install:user:copilot:dry": "node install.mjs --dry-run --platform copilot --scope user"
   }
 }
