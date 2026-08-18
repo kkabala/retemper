@@ -8,13 +8,14 @@
  *   node install.mjs --platform grok --scope project --target /path/to/repo
  *   node install.mjs --dry-run --platform codex --scope user
  *   node install.mjs --platform copilot --scope project --target /path/to/repo
+ *   node install.mjs --update
  *
  * Codex and GitHub Copilot install the same SKILL.md tree under .agents/skills
  * (official discovery root for both). There is no second copy under
  * .github/skills or ~/.copilot/skills.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +50,7 @@ export function parseArgs(argv) {
     scope: "",
     target: "",
     standards: false,
+    update: false,
   };
   const rest = argv.slice(2);
   for (let i = 0; i < rest.length; i += 1) {
@@ -57,6 +59,7 @@ export function parseArgs(argv) {
     else if (token === "--dry-run") out.dryRun = true;
     else if (token === "--skip-deps") out.skipDeps = true;
     else if (token === "--standards") out.standards = true;
+    else if (token === "--update") out.update = true;
     else if (token === "--platform") out.platform = String(rest[++i] || "");
     else if (token === "--scope") out.scope = String(rest[++i] || "");
     else if (token === "--target") out.target = String(rest[++i] || "");
@@ -77,6 +80,7 @@ export function helpText() {
     "  node install.mjs --platform grok --scope project --target <repo> [--standards]",
     "  node install.mjs --platform codex --scope user [--dry-run] [--skip-deps]",
     "  node install.mjs --platform copilot --scope project --target <repo> [--standards]",
+    "  node install.mjs --update [--dry-run] [--skip-deps] [--standards]",
     "",
     "Options:",
     "  --platform grok|codex|copilot",
@@ -85,6 +89,7 @@ export function helpText() {
     "  --scope user|project     grok user → ~/.grok/workflows   grok project → <repo>/.grok/workflows",
     "                           skill user → ~/.agents/skills   skill project → <repo>/.agents/skills",
     "  --target <dir>           Required for --scope project",
+    "  --update                 Re-apply to destinations in ~/.retemper/installs.txt (or $RETEMPER_HOME/installs.txt)",
     "  --dry-run                Print the plan, including the grill-me dependency step",
     "  --skip-deps              Do not fetch Matt Pocock grill-me / grilling",
     "  --standards              Copy templates/CODING_STANDARDS.md into the project root if missing",
@@ -111,6 +116,112 @@ export function agentsHome() {
   return join(homedir(), ".agents");
 }
 
+export function retemperHome() {
+  return process.env.RETEMPER_HOME ? resolve(process.env.RETEMPER_HOME) : join(homedir(), ".retemper");
+}
+
+export function installsPath() {
+  return join(retemperHome(), "installs.txt");
+}
+
+export function parseInstalls(text) {
+  const records = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const parsed = parseInstallLine(trimmed);
+    records.push(parsed || { invalid: true, raw: line });
+  }
+  return records;
+}
+
+function parseInstallLine(trimmed) {
+  const match = trimmed.match(/^(\S+)\s+(\S+)\s+(.+)$/);
+  if (!match) return null;
+  const platform = match[1];
+  const scope = match[2];
+  const dest = match[3].trim();
+  if (!SUPPORTED_PLATFORMS.includes(platform) || !SUPPORTED_SCOPES.includes(scope) || !dest) {
+    return null;
+  }
+  return { platform, scope, path: dest };
+}
+
+export function formatInstalls(entries) {
+  if (!entries.length) return "";
+  return `${entries
+    .map((entry) =>
+      entry.invalid ? entry.raw : `${entry.platform} ${entry.scope} ${entry.path}`,
+    )
+    .join("\n")}\n`;
+}
+
+function sameDestination(left, right) {
+  if (left.platform !== right.platform || left.scope !== right.scope) return false;
+  if (left.scope === "user") return true;
+  return resolve(left.path) === resolve(right.path);
+}
+
+function asInstallRecord(record) {
+  return { platform: record.platform, scope: record.scope, path: record.path };
+}
+
+export function upsertInstalls(entries, record) {
+  const next = [];
+  let replaced = false;
+  for (const entry of entries) {
+    if (!entry.invalid && sameDestination(entry, record)) {
+      if (!replaced) {
+        next.push(asInstallRecord(record));
+        replaced = true;
+      }
+    } else {
+      next.push(entry);
+    }
+  }
+  if (!replaced) {
+    next.push(asInstallRecord(record));
+  }
+  return next;
+}
+
+export function recordFromPlan(plan) {
+  return asInstallRecord({
+    platform: plan.platform,
+    scope: plan.scope,
+    path: plan.targetRoot,
+  });
+}
+
+export function missingInstallsMessage(filePath = installsPath()) {
+  return [
+    `No install record found at ${filePath}.`,
+    "Update cannot run until a normal install has been recorded.",
+    "Run a normal install first, for example:",
+    "  node install.mjs --platform grok --scope user",
+    "  node install.mjs --platform grok --scope project --target <repo>",
+    "  node install.mjs --platform codex --scope user",
+    "  node install.mjs --platform codex --scope project --target <repo>",
+  ].join("\n");
+}
+
+function writeInstalls(entries, filePath = installsPath()) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(tmp, formatInstalls(entries));
+  renameSync(tmp, filePath);
+}
+
+function readInstallRecords(filePath = installsPath()) {
+  if (!existsSync(filePath)) return null;
+  return parseInstalls(readFileSync(filePath, "utf8"));
+}
+
+function recordInstall(plan) {
+  const filePath = installsPath();
+  writeInstalls(upsertInstalls(readInstallRecords(filePath) || [], recordFromPlan(plan)), filePath);
+}
+
 function sharedSources() {
   return {
     refsSrc: join(here, "references"),
@@ -127,6 +238,7 @@ function planGrok(opts, sources) {
     return {
       platform: "grok",
       scope: "user",
+      targetRoot: home,
       workflowSrc,
       workflowDest: join(home, "workflows", `${NAME}.rhai`),
       skillSrc: null,
@@ -148,6 +260,7 @@ function planGrok(opts, sources) {
   return {
     platform: "grok",
     scope: "project",
+    targetRoot: target,
     workflowSrc,
     workflowDest: join(target, ".grok", "workflows", `${NAME}.rhai`),
     skillSrc: null,
@@ -173,6 +286,7 @@ function planSkillPlatform(platform, opts, sources) {
     return {
       platform,
       scope: "user",
+      targetRoot: home,
       workflowSrc: null,
       workflowDest: null,
       skillSrc,
@@ -195,6 +309,7 @@ function planSkillPlatform(platform, opts, sources) {
   return {
     platform,
     scope: "project",
+    targetRoot: target,
     workflowSrc: null,
     workflowDest: null,
     skillSrc,
@@ -290,6 +405,14 @@ function payloadPath(plan) {
   return plan.skillSrc || plan.workflowSrc;
 }
 
+function applyPlan(plan, opts) {
+  const payload = payloadPath(plan);
+  if (!payload || !existsSync(payload)) {
+    throw new Error(`Missing install payload: ${payload || "(none)"}`);
+  }
+  apply(plan, opts);
+}
+
 function isCli() {
   const entry = process.argv[1];
   if (!entry) return false;
@@ -300,24 +423,82 @@ function isCli() {
   }
 }
 
-export function main(argv = process.argv) {
-  const opts = parseArgs(argv);
-  if (opts.help || (!opts.platform && !opts.scope)) {
-    console.log(helpText());
+function updateOne(entry, opts) {
+  if (entry.invalid) {
+    console.error(`Skipping malformed install record: ${entry.raw}`);
+    return { keep: true, entry, failed: false };
+  }
+  if (entry.scope === "project" && !existsSync(entry.path)) {
+    console.error(`Skipping missing project path: ${entry.path}`);
+    return { keep: Boolean(opts.dryRun), entry, failed: false };
+  }
+  try {
+    const plan = planInstall({
+      platform: entry.platform,
+      scope: entry.scope,
+      target: entry.path,
+      standards: opts.standards,
+    });
+    console.log(describe(plan, opts));
+    if (!opts.dryRun) {
+      applyPlan(plan, opts);
+    }
+    return { keep: true, entry: recordFromPlan(plan), failed: false };
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    return { keep: true, entry, failed: true };
+  }
+}
+
+function runUpdate(opts) {
+  const filePath = installsPath();
+  const entries = readInstallRecords(filePath);
+  if (entries === null) {
+    console.error(missingInstallsMessage(filePath));
+    return 1;
+  }
+  if (entries.length === 0) {
+    console.log("Nothing to update.");
     return 0;
   }
+  let kept = [];
+  let failed = 0;
+  for (const entry of entries) {
+    const outcome = updateOne(entry, opts);
+    if (outcome.keep) {
+      if (outcome.entry.invalid) kept.push(outcome.entry);
+      else kept = upsertInstalls(kept, outcome.entry);
+    }
+    if (outcome.failed) failed += 1;
+  }
+  if (!opts.dryRun) {
+    writeInstalls(kept, filePath);
+  }
+  return failed === 0 ? 0 : 1;
+}
+
+function runInstall(opts) {
   const plan = planInstall(opts);
   console.log(describe(plan, opts));
   if (opts.dryRun) {
     return 0;
   }
-  const payload = payloadPath(plan);
-  if (!payload || !existsSync(payload)) {
-    throw new Error(`Missing install payload: ${payload || "(none)"}`);
-  }
-  apply(plan, opts);
+  applyPlan(plan, opts);
+  recordInstall(plan);
   console.log(`installed ${NAME} (${plan.scope})`);
   return 0;
+}
+
+export function main(argv = process.argv) {
+  const opts = parseArgs(argv);
+  if (opts.help || (!opts.update && !opts.platform && !opts.scope)) {
+    console.log(helpText());
+    return 0;
+  }
+  if (opts.update) {
+    return runUpdate(opts);
+  }
+  return runInstall(opts);
 }
 
 if (isCli()) {

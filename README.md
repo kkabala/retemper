@@ -144,6 +144,25 @@ node install.mjs --platform copilot --scope user --skip-deps
 | `--dry-run` | Print the plan; write nothing; no network |
 | `--skip-deps` | Do not fetch Matt Pocock grill-me / grilling (vendor copies only) |
 | `--standards` | Copy `templates/CODING_STANDARDS.md` into the project root if missing |
+| `--update` | Re-apply the current payload to every destination recorded on this machine |
+
+Every successful (non-dry-run) install appends or updates a line in `~/.retemper/installs.txt` (`$RETEMPER_HOME/installs.txt` if set). Each line is `platform scope path`: user scope stores the Grok or Codex home, project scope stores the repo root.
+
+### Update
+
+```bash
+node install.mjs --update
+node install.mjs --update --dry-run
+node install.mjs --update --skip-deps
+npm run update
+npm run update:dry
+```
+
+`--update` does not take `--platform` or `--scope`. It reads the tracking file and refreshes every grok/codex user and project dest recorded there.
+
+If `installs.txt` is missing, the installer prints that path, shows the same `--platform` / `--scope` / `--target` flags as a first install, and exits without writing anything. Run a normal install once so the file exists, then `--update` again.
+
+`--dry-run` prints the planned dests and does not copy files or edit the tracking file. A recorded project path that no longer exists is skipped and, unless you passed `--dry-run`, removed from the file.
 
 npm shortcuts:
 
@@ -154,6 +173,8 @@ npm run install:user:copilot    # same dest as install:user:codex
 npm run install:user:dry
 npm run install:user:codex:dry
 npm run install:user:copilot:dry
+npm run update
+npm run update:dry
 ```
 
 Every platform then fetches Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
