@@ -1,6 +1,14 @@
 # retemper
 
-A project-agnostic **plan → accept → build → harden → review → QA → PR** cycle.
+A project-agnostic **plan → accept → build → harden → review → QA → PR** cycle
+for **Grok Build** and **Codex**.
+
+| Platform | What you install | How you launch |
+| --- | --- | --- |
+| Grok Build | `.rhai` workflow | `/workflow retemper …` (or `/retemper`) |
+| Codex | Agent Skill (`SKILL.md`) | `$retemper …` or pick **retemper** from `/skills` |
+
+Claude Code and Copilot are a later port.
 
 ## Cycle
 
@@ -50,6 +58,8 @@ JSON still works, if you want it:
 
 Codex has no Grok workflow engine. After a Codex install, mention the skill with `$` (OpenAI’s skill prefix — not `/`), or type `/skills` and pick **retemper**. Saying “retemper …” in plain language also works via implicit matching.
 
+Do **not** type `/retemper` in Codex — `/` is for session commands (`/skills`, `/review`). `/retemper` is a Grok/Claude habit and usually fails as an unknown slash command.
+
 ```
 $retemper Add CSV export
 $retemper Add CSV export --ticket P2-014 --no-plan
@@ -57,11 +67,15 @@ $retemper Add CSV export --no-grill
 $retemper Add CSV export --no-standards
 ```
 
+### Shared flags
+
 | Intent | Flag | JSON |
 | --- | --- | --- |
-| Don’t write a new plan (still grill) | `--no-plan` + `--ticket ID` | `no_plan: true`, `ticket` or `plan` |
+| Don’t write a new plan (still grill) | `--no-plan` + `--ticket ID` or `--plan …` | `no_plan: true`, `ticket` or `plan` |
 | Don’t grill | `--no-grill` / `--no-grill-me` | `grill: false` or `grill_me: false` |
 | Don’t edit `CODING_STANDARDS.md` | `--no-standards` | `update_standards: false` |
+
+`--ticket=ID` and `--plan=…` are the same as the spaced forms.
 
 ## Waiting on a pipeline
 
@@ -85,6 +99,13 @@ On by default. After a successful run, retemper updates (or creates) `CODING_STA
 
 ## Install
 
+Role files live once in `references/` (architect, acceptance, developer, cleaner, tester, reviewer, Final QA skeptic, pipeline, standards). The installer copies that shared tree into each platform’s dest.
+
+| Platform | User scope | Project scope | Payload |
+| --- | --- | --- | --- |
+| Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai` |
+| Codex | `~/.agents/skills` | `<repo>/.agents/skills` | `.agents/skills/retemper/SKILL.md` |
+
 User scope (every project):
 
 ```bash
@@ -103,9 +124,26 @@ node install.mjs --platform codex --scope project --target /path/to/repo
 node install.mjs --help
 node install.mjs --dry-run --platform grok --scope user
 node install.mjs --dry-run --platform codex --scope user
+node install.mjs --platform grok --scope project --target /path/to/repo --standards
+node install.mjs --platform codex --scope user --skip-deps
 ```
 
-Role files live once in `references/` (architect, acceptance, developer, cleaner, tester, reviewer, Final QA skeptic, pipeline, standards). The installer copies that shared tree into each platform’s dest. Grok still installs the `.rhai` workflow under `~/.grok` (or `$GROK_HOME`) / `<repo>/.grok`. Codex still installs an Agent Skill (`SKILL.md` with `name` + `description`) plus grill-me/grilling under `$HOME/.agents/skills` / `<repo>/.agents/skills`. Both then fetch Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Print the plan; write nothing; no network |
+| `--skip-deps` | Do not fetch Matt Pocock grill-me / grilling (vendor copies only) |
+| `--standards` | Copy `templates/CODING_STANDARDS.md` into the project root if missing |
+
+npm shortcuts:
+
+```bash
+npm run install:user          # grok, user scope
+npm run install:user:codex    # codex, user scope
+npm run install:user:dry
+npm run install:user:codex:dry
+```
+
+Both platforms then fetch Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
 
 Codex invocation after install is `$retemper` or `/skills`, not `/workflow retemper`.
 
@@ -115,4 +153,6 @@ Codex invocation after install is `$retemper` or `/skills`, not `/workflow retem
 npm test
 ```
 
-Claude Code and Copilot are a later port.
+## License
+
+MIT. See [LICENSE](LICENSE).

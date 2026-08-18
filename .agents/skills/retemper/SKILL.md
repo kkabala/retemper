@@ -1,5 +1,6 @@
 ---
 name: retemper
+license: MIT
 description: >
   Run the retemper cycle — Planning, Acceptance tests, Development, Cleaner,
   Testing, Code review, Final QA Review, Pipeline monitoring, and Standards —
