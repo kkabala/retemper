@@ -1,14 +1,15 @@
 # retemper
 
 A project-agnostic **plan → accept → build → harden → review → QA → PR** cycle
-for **Grok Build** and **Codex**.
+for **Grok Build**, **Codex**, and **GitHub Copilot**.
 
 | Platform | What you install | How you launch |
 | --- | --- | --- |
 | Grok Build | `.rhai` workflow | `/workflow retemper …` (or `/retemper`) |
 | Codex | Agent Skill (`SKILL.md`) | `$retemper …` or pick **retemper** from `/skills` |
+| GitHub Copilot | same Agent Skill | `/retemper …` or pick **retemper** from `/skills` |
 
-Claude Code and Copilot are a later port.
+Codex and Copilot share one shipped skill: `.agents/skills/retemper/`. The installer writes that tree under `.agents/skills` (user or project). There is no second copy under `.github/skills` or `~/.copilot/skills`.
 
 ## Cycle
 
@@ -56,15 +57,20 @@ JSON still works, if you want it:
 
 ### Codex
 
-Codex has no Grok workflow engine. After a Codex install, mention the skill with `$` (OpenAI’s skill prefix — not `/`), or type `/skills` and pick **retemper**. Saying “retemper …” in plain language also works via implicit matching.
-
-Do **not** type `/retemper` in Codex — `/` is for session commands (`/skills`, `/review`). `/retemper` is a Grok/Claude habit and usually fails as an unknown slash command.
-
 ```
 $retemper Add CSV export
 $retemper Add CSV export --ticket P2-014 --no-plan
 $retemper Add CSV export --no-grill
 $retemper Add CSV export --no-standards
+```
+
+### GitHub Copilot
+
+```
+/retemper Add CSV export
+/retemper Add CSV export --ticket P2-014 --no-plan
+/retemper Add CSV export --no-grill
+/retemper Add CSV export --no-standards
 ```
 
 ### Shared flags
@@ -79,7 +85,7 @@ $retemper Add CSV export --no-standards
 
 ## Waiting on a pipeline
 
-Neither harness should invent a green build. Open the PR and **wait on the real CI status** (blocking watch, or a 5-minute recheck) until it is terminal. Then merge or return to Development.
+No harness should invent a green build. Open the PR and **wait on the real CI status** (blocking watch, or a 5-minute recheck) until it is terminal. Then merge or return to Development.
 
 If there is no pipeline, the wait fails or times out, or merge needs a human, **stop**.
 
@@ -93,39 +99,44 @@ The script then re-checks the real status and merges or returns to Development.
 
 **Codex.** There is no `pause()` / `/workflow resume`. Continue / re-invoke `$retemper` (or `/skills`) after CI, then re-check the real status.
 
+**Copilot.** Same as Codex — no `pause()` / `/workflow resume`. Continue / re-invoke `/retemper` (or `/skills`) after CI, then re-check the real status.
+
 ## Living `CODING_STANDARDS.md`
 
 On by default. After a successful run, retemper updates (or creates) `CODING_STANDARDS.md` with conventions this task actually established. Disable with `--no-standards` / `update_standards: false`. A starter file lives in `templates/CODING_STANDARDS.md`.
 
 ## Install
 
-Role files live once in `references/` (architect, acceptance, developer, cleaner, tester, reviewer, Final QA skeptic, pipeline, standards). The installer copies that shared tree into each platform’s dest.
+Role files live once in `references/` (architect, acceptance, developer, cleaner, tester, reviewer, Final QA skeptic, pipeline, standards). The installer copies that tree next to each payload.
 
 | Platform | User scope | Project scope | Payload |
 | --- | --- | --- | --- |
-| Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai` |
-| Codex | `~/.agents/skills` | `<repo>/.agents/skills` | `.agents/skills/retemper/SKILL.md` |
+| Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai` and `retemper/references/` |
+| Codex / Copilot | `~/.agents/skills` | `<repo>/.agents/skills` | `retemper/SKILL.md` and `retemper/references/` |
+
+`--platform copilot` and `--platform codex` write the same dests. Installing one is enough for both skill-based harnesses. Official Copilot roots also include `.github/skills` and `~/.copilot/skills`; this installer does **not** duplicate the tree there.
 
 User scope (every project):
 
 ```bash
 node install.mjs --platform grok --scope user
 node install.mjs --platform codex --scope user
+node install.mjs --platform copilot --scope user
 ```
 
 Project scope:
 
 ```bash
 node install.mjs --platform grok --scope project --target /path/to/repo
-node install.mjs --platform codex --scope project --target /path/to/repo
+node install.mjs --platform copilot --scope project --target /path/to/repo
 ```
 
 ```bash
 node install.mjs --help
 node install.mjs --dry-run --platform grok --scope user
-node install.mjs --dry-run --platform codex --scope user
+node install.mjs --dry-run --platform copilot --scope user
 node install.mjs --platform grok --scope project --target /path/to/repo --standards
-node install.mjs --platform codex --scope user --skip-deps
+node install.mjs --platform copilot --scope user --skip-deps
 ```
 
 | Flag | Meaning |
@@ -137,15 +148,17 @@ node install.mjs --platform codex --scope user --skip-deps
 npm shortcuts:
 
 ```bash
-npm run install:user          # grok, user scope
-npm run install:user:codex    # codex, user scope
+npm run install:user            # grok, user scope
+npm run install:user:codex      # shared skill → ~/.agents/skills
+npm run install:user:copilot    # same dest as install:user:codex
 npm run install:user:dry
 npm run install:user:codex:dry
+npm run install:user:copilot:dry
 ```
 
-Both platforms then fetch Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
+Every platform then fetches Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
 
-Codex invocation after install is `$retemper` or `/skills`, not `/workflow retemper`.
+Codex invocation after install is `$retemper` or `/skills`, not `/workflow retemper`. Copilot invocation is `/retemper` or `/skills`.
 
 ## Tests
 

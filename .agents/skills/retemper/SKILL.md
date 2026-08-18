@@ -17,13 +17,14 @@ skill (the installer places the role files there). Stay language- and
 stack-agnostic: use the project’s own tools and layout. Do not require Jira,
 NX, or a particular UI toolkit.
 
-**Invocation:** `$retemper` or pick **retemper** from `/skills`. Codex has no
-Grok workflow runner — do not tell the user to launch or resume a `/workflow`.
+**Invocation:** `$retemper` (Codex), `/retemper` (GitHub Copilot), or pick
+**retemper** from `/skills`. Codex and Copilot have no Grok workflow runner —
+do not tell the user to launch or resume a `/workflow`.
 
 ## Launch
 
-Parse the user’s text after `$retemper` (or the rest of the prompt). A plain
-sentence is the task. Also accept a JSON object `{ "task": "..." }`.
+Parse the user’s text after `$retemper` or `/retemper` (or the rest of the
+prompt). A plain sentence is the task. Also accept a JSON object `{ "task": "..." }`.
 
 | Intent | Flag | JSON |
 | --- | --- | --- |
@@ -56,8 +57,9 @@ the phase you are in; do not load every reference up front.
 1. **Planning** — `references/architect.md`. Modular, domain-driven, hexagonal /
    plug-in. Do not implement. If grill is on, run a grilling interview (Matt
    Pocock **grill-me** / grilling): if those skills are installed, read and
-   follow them (`$grill-me` / `$grilling`). Decisions belong to the user; facts
-   belong to you. If grill is off, do not interview.
+   follow them (`$grill-me` / `$grilling` on Codex, `/grill-me` / `/grilling`
+   on Copilot). Decisions belong to the user; facts belong to you. If grill
+   is off, do not interview.
 2. **Acceptance tests** — `references/qa-acceptance.md`. User-facing end-to-end
    definition of done. Do not implement the feature.
 3. **Development** — `references/developer.md`. TDD first, then Clean Code /
@@ -112,8 +114,8 @@ resume command.
 
 Set `needs_user` only when pipeline.md says to (no pipeline, wait failed or
 timed out, or merge needs a human). Then **stop**. Tell the human to continue /
-re-invoke `$retemper` (or `/skills` → retemper) after CI finishes, then
-**re-check the real status**.
+re-invoke `$retemper` (Codex), `/retemper` (Copilot), or `/skills` → retemper
+after CI finishes, then **re-check the real status**.
 
 When they continue after a CI stop, resume at **Pipeline monitoring**. Re-check
 once. Then merge or return to Development.
