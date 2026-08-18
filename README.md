@@ -19,7 +19,7 @@ Claude Code and Copilot are a later port.
 5. **Testing** — cover what TDD and acceptance missed; automate if it was just forgotten. May return to Development.
 6. **Code review** — real diff; missing tests are blockers. May return to Development.
 7. **Final QA Review** — skeptic of “done”: boot what exists, re-run acceptance, try to break it. May return to Development.
-8. **Pipeline monitoring** — open a PR. If CI is still running, **stop** and wait for a human continue; then re-check the real status. Code-caused CI failure returns to Development.
+8. **Pipeline monitoring** — open a PR. Wait on real CI until it is terminal. If you cannot wait, **stop** and wait for a human continue; then re-check the real status. Code-caused CI failure returns to Development.
 9. **Standards** — update living `CODING_STANDARDS.md` unless you pass `--no-standards`.
 
 Skip writing a *new* architecture plan with `--no-plan` plus a ticket or existing plan. That does **not** skip the grill.
@@ -79,9 +79,11 @@ $retemper Add CSV export --no-standards
 
 ## Waiting on a pipeline
 
-Neither harness should invent a green build. Open the PR, check CI once, and if the job is still running, **stop**.
+Neither harness should invent a green build. Open the PR and **wait on the real CI status** (blocking watch, or a 5-minute recheck) until it is terminal. Then merge or return to Development.
 
-**Grok.** The run **pauses**. When the build finishes, resume:
+If there is no pipeline, the wait fails or times out, or merge needs a human, **stop**.
+
+**Grok.** The run **pauses**. When you can continue, resume:
 
 ```
 /workflow resume retemper
@@ -89,7 +91,7 @@ Neither harness should invent a green build. Open the PR, check CI once, and if 
 
 The script then re-checks the real status and merges or returns to Development.
 
-**Codex.** There is no `pause()` / `/workflow resume`. Stop and continue / re-invoke `$retemper` (or `/skills`) after CI, then re-check the real status. Do not busy-loop.
+**Codex.** There is no `pause()` / `/workflow resume`. Continue / re-invoke `$retemper` (or `/skills`) after CI, then re-check the real status.
 
 ## Living `CODING_STANDARDS.md`
 
