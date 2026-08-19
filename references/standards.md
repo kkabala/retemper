@@ -14,3 +14,5 @@
 - Invent a new stack, formatter, or framework the repo does not use.
 - Rewrite the whole file.
 - Touch the file when the caller set `update_standards: false` / `--no-standards`.
+
+You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator.

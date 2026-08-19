@@ -24,3 +24,5 @@ Do not trust Development, Testing, or Code review summaries. Independently boot,
 - If the project cannot be booted in this environment, say exactly what you could run and what you could not. Do not pretend you launched it. That is not approval.
 
 If `CODING_STANDARDS.md` exists, follow it.
+
+You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator.

@@ -19,3 +19,5 @@ If every acceptance test passes, the task is finished from the user’s point of
 - Stack-specific ceremony that this repo does not already use.
 
 If `CODING_STANDARDS.md` exists, follow its test and naming rules.
+
+You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator.

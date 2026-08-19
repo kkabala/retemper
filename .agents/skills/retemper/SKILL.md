@@ -11,11 +11,18 @@ description: >
 
 # Retemper
 
-You are the orchestrator of one retemper run. Follow this file as the control
-flow. Load only the current phase’s reference from `references/` beside this
-skill (the installer places the role files there). Stay language- and
-stack-agnostic: use the project’s own tools and layout. Do not require Jira,
-NX, or a particular UI toolkit.
+You are the orchestrator of one retemper run. First read and follow
+`references/orchestrator.md` beside this skill (the installer places the role
+files there). Then follow this file as the cycle control flow. Load only the
+current phase’s reference from `references/` while you walk. Stay language-
+and stack-agnostic: use the project’s own tools and layout. Do not require
+Jira, NX, or a particular UI toolkit.
+
+When the harness can spawn a child, dispatch that phase’s specialist(s) at
+the phase’s compute band. Follow `references/orchestrator.md` for fan-out:
+one worker per ready, independent item; dependent items wait for the next
+wave. This file names which specialist that is. Otherwise run the role
+yourself. Tell leaf workers not to spawn.
 
 **Invocation:** `$retemper` (Codex), `/retemper` (GitHub Copilot), or pick
 **retemper** from `/skills`. Codex and Copilot have no Grok workflow runner —
@@ -54,28 +61,37 @@ Planning runs.
 Walk these titles in order. Do not rename them. Read the named reference for
 the phase you are in; do not load every reference up front.
 
-1. **Planning** — `references/architect.md`. Modular, domain-driven, hexagonal /
-   plug-in. Do not implement. If grill is on, run a grilling interview (Matt
-   Pocock **grill-me** / grilling): if those skills are installed, read and
-   follow them (`$grill-me` / `$grilling` on Codex, `/grill-me` / `/grilling`
-   on Copilot). Decisions belong to the user; facts belong to you. If grill
-   is off, do not interview.
-2. **Acceptance tests** — `references/qa-acceptance.md`. User-facing end-to-end
-   definition of done. Do not implement the feature.
-3. **Development** — `references/developer.md`. TDD first, then Clean Code /
-   Clean Coder, SOLID, KISS, YAGNI, DRY.
-4. **Cleaner** — `references/cleaner.md`. Same behaviour, cleaner design.
-5. **Testing** — `references/tester.md`. Cover what TDD and acceptance missed.
-   Missing tests are blockers.
-6. **Code review** — `references/reviewer.md`. Read the real diff. Missing tests
-   are blockers. Do not modify the code.
-7. **Final QA Review** — `references/final-qa.md`. Skeptic of “done”: boot
-   what exists, re-run acceptance yourself, try to refute. Do not trust
-   earlier summaries.
-8. **Pipeline monitoring** — `references/pipeline.md`. Open a PR. See
-   **Waiting on CI** below.
-9. **Standards** — `references/standards.md`. Living `CODING_STANDARDS.md`
-   unless `--no-standards`.
+1. **Planning** — `references/architect.md` — compute band **deep**. Modular,
+   domain-driven, hexagonal / plug-in. Do not implement. One architect.
+   The plan must list work items (`id`, summary, `depends_on`, writable
+   scope). The architect proposes grill questions in its payload. You
+   synthesize and ask (Matt Pocock **grill-me** / grilling if those skills
+   are installed: `$grill-me` / `$grilling` on Codex, `/grill-me` /
+   `/grilling` on Copilot). Decisions belong to the user; facts belong to
+   you. If grill is off, do not interview.
+2. **Acceptance tests** — `references/qa-acceptance.md` — compute band **standard**.
+   User-facing end-to-end definition of done. Do not implement the feature.
+   One acceptance author unless that work itself partitions.
+3. **Development** — `references/developer.md` — compute band **standard**.
+   TDD first, then Clean Code / Clean Coder, SOLID, KISS, YAGNI, DRY.
+   Spawn **one developer per ready plan item** in the same parallel batch
+   when items have no remaining `depends_on` and disjoint writable scopes.
+   Then the next wave. Do not fold independent items into one developer
+   when you can spawn. A return-to-Development fix is one developer
+   unless the bounce itself lists independent items.
+4. **Cleaner** — `references/cleaner.md` — compute band **standard**. Same
+   behaviour, cleaner design.
+5. **Testing** — `references/tester.md` — compute band **standard**. Cover
+   what TDD and acceptance missed. Missing tests are blockers.
+6. **Code review** — `references/reviewer.md` — compute band **deep**. Read
+   the real diff. Missing tests are blockers. Do not modify the code.
+7. **Final QA Review** — `references/final-qa.md` — compute band **deep**.
+   Skeptic of “done”: boot what exists, re-run acceptance yourself, try to
+   refute. Do not trust earlier summaries.
+8. **Pipeline monitoring** — `references/pipeline.md` — compute band **standard**.
+   Open a PR. See **Waiting on CI** below.
+9. **Standards** — `references/standards.md` — compute band **standard**.
+   Living `CODING_STANDARDS.md` unless `--no-standards`.
 
 If this repo has `CODING_STANDARDS.md` at the root, follow it in every phase.
 If it does not, continue.

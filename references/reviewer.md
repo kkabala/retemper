@@ -22,3 +22,5 @@ Read the actual change (`git diff`, the files, the tests). Do not review from me
 - Set `return_to_dev` only with evidence you inspected. Otherwise leave it false. Do not modify the code yourself.
 
 No vendor-specific boards, issue trackers, or review-file ceremonies unless the repo already uses them.
+
+You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator.
