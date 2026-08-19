@@ -5,9 +5,9 @@ for **Grok Build**, **Codex**, and **GitHub Copilot**.
 
 | Platform | What you install | How you launch |
 | --- | --- | --- |
-| Grok Build | `.rhai` workflow | `/workflow retemper …` (or `/retemper`) |
-| Codex | Agent Skill (`SKILL.md`) | `$retemper …` or pick **retemper** from `/skills` |
-| GitHub Copilot | same Agent Skill | `/retemper …` or pick **retemper** from `/skills` |
+| Grok Build | `.rhai` workflow + `orchestrate` skill | `/workflow retemper …` (or `/retemper`) |
+| Codex | Agent Skills (`retemper`, `orchestrate`) | `$retemper …` or pick **retemper** from `/skills` |
+| GitHub Copilot | same Agent Skills | `/retemper …` or pick **retemper** from `/skills` |
 
 Codex and Copilot share one shipped skill: `.agents/skills/retemper/`. The installer writes that tree under `.agents/skills` (user or project). There is no second copy under `.github/skills` or `~/.copilot/skills`.
 
@@ -107,12 +107,12 @@ On by default. After a successful run, retemper updates (or creates) `CODING_STA
 
 ## Install
 
-Role files live once in `references/` (architect, acceptance, developer, cleaner, tester, reviewer, Final QA skeptic, pipeline, standards). The installer copies that tree next to each payload.
+Role files live once in `references/` (orchestrator, architect, acceptance, developer, cleaner, tester, reviewer, Final QA skeptic, pipeline, standards). The installer copies that tree next to each payload, and also installs a thin `orchestrate` skill that loads `orchestrator.md` for non-cycle work.
 
 | Platform | User scope | Project scope | Payload |
 | --- | --- | --- | --- |
-| Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai` and `retemper/references/` |
-| Codex / Copilot | `~/.agents/skills` | `<repo>/.agents/skills` | `retemper/SKILL.md` and `retemper/references/` |
+| Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai`, `retemper/references/`, `.grok/skills/orchestrate/` |
+| Codex / Copilot | `~/.agents/skills` | `<repo>/.agents/skills` | `retemper/SKILL.md`, `retemper/references/`, `orchestrate/` |
 
 `--platform copilot` and `--platform codex` write the same dests. Installing one is enough for both skill-based harnesses. Official Copilot roots also include `.github/skills` and `~/.copilot/skills`; this installer does **not** duplicate the tree there.
 

@@ -35,6 +35,19 @@ let plan_schema = #{
         "summary": #{ "type": "string" },
         "grill_open": #{ "type": "boolean" },
         "questions": #{ "type": "string" },
+        "work_items": #{
+            "type": "array",
+            "items": #{
+                "type": "object",
+                "required": ["id", "summary"],
+                "properties": #{
+                    "id": #{ "type": "string" },
+                    "summary": #{ "type": "string" },
+                    "depends_on": #{ "type": "array", "items": #{ "type": "string" } },
+                    "scope": #{ "type": "string" },
+                },
+            },
+        },
     },
 };
 
@@ -192,7 +205,46 @@ fn role_prefix(role_file) {
     text += " exists, or a user-level retemper/references/" + role_file;
     text += " exists, read it and follow it. Stay language- and stack-agnostic. ";
     text += "Use the project's own tools and layout. Do not require Jira, NX, or a particular UI toolkit. ";
+    text += "You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator. ";
     text
+}
+
+fn compute_band(band) {
+    " Compute band: " + band + ". Work at that depth. Inherit the parent model; never invent a vendor model id."
+}
+
+fn is_array(x) { type_of(x) == "array" }
+
+fn item_id(item) {
+    if is_map(item) { return trimmed(item.id); }
+    ""
+}
+
+fn id_in(ids, needle) {
+    if !is_array(ids) { return false; }
+    let i = 0;
+    while i < ids.len() {
+        if ids[i] == needle { return true; }
+        i += 1;
+    }
+    false
+}
+
+fn deps_met(item, done_ids) {
+    if !is_map(item) { return true; }
+    if !is_array(item.depends_on) { return true; }
+    let i = 0;
+    while i < item.depends_on.len() {
+        if !id_in(done_ids, item.depends_on[i]) { return false; }
+        i += 1;
+    }
+    true
+}
+
+fn take_work_items(res) {
+    if res == () || !res.success || !is_map(res.output) { return []; }
+    if is_array(res.output.work_items) { return res.output.work_items; }
+    []
 }
 
 fn task_blob(bag) {
@@ -225,13 +277,15 @@ let brief_json = json_encode(#{
 // --- Planning -------------------------------------------------------------
 phase("Planning");
 let plan_summary = "";
+let plan_res = ();
 if skip_planning(bag) {
     log("Planning skipped (no_plan + brief + --no-grill)");
     plan_summary = arg_text(bag, "plan");
     if plan_summary == "" { plan_summary = "Ticket " + arg_text(bag, "ticket"); }
 } else {
     let p_prompt = role_prefix("architect.md");
-    p_prompt += "You are the Architect. Modular, domain-driven, hexagonal / plug-in shape. ";
+    p_prompt += compute_band("deep");
+    p_prompt += " You are the Architect. Modular, domain-driven, hexagonal / plug-in shape. ";
     p_prompt += "Small coherent packages, not a monolith of huge horizontal layers. ";
     p_prompt += "Use read-only tools first (read_file, grep, list_dir). Look up facts. ";
     p_prompt += "Do not implement. ";
@@ -242,18 +296,21 @@ if skip_planning(bag) {
     } else {
         p_prompt += "Write a plan an independent developer can follow. ";
     }
+    p_prompt += "Return work_items: each {id, summary, depends_on, scope}. ";
+    p_prompt += "depends_on is other ids. scope is the writable paths. ";
+    p_prompt += "Items may run in parallel only when depends_on is met and scopes do not overlap. ";
     if want_grill(bag) {
-        p_prompt += "Run a grilling interview (Matt Pocock grill-me / grilling) even though a brief may already exist. ";
+        p_prompt += "Do not interview the user. Propose frontier questions in questions. ";
         p_prompt += "Design tree, frontier questions, recommended answers. Decisions for the user, facts for you. ";
-        p_prompt += "If a grilling or grill-me skill file exists, read it and follow it. ";
         p_prompt += "Set grill_open=true if any decision is still the user's. ";
+        p_prompt += "The workflow will present your questions as-is. ";
     } else {
         p_prompt += "Grilling is turned off (--no-grill). Do not interview. Set grill_open=false. ";
     }
     p_prompt += task_blob(bag);
     p_prompt += " Brief JSON: " + brief_json + ".";
 
-    let plan_res = agent(p_prompt, #{
+    plan_res = agent(p_prompt, #{
         label: "architect",
         capability_mode: "read-only",
         output_schema: plan_schema,
@@ -274,11 +331,16 @@ if skip_planning(bag) {
 }
 
 let plan_json = json_encode(plan_summary);
+let work_items = [];
+if !skip_planning(bag) && plan_res != () {
+    work_items = take_work_items(plan_res);
+}
 
 // --- Acceptance tests -----------------------------------------------------
 phase("Acceptance tests");
 let acc_prompt = role_prefix("qa-acceptance.md");
-acc_prompt += "You are the QA engineer who writes acceptance tests. ";
+acc_prompt += compute_band("standard");
+acc_prompt += " You are the QA engineer who writes acceptance tests. ";
 acc_prompt += "If every acceptance test passes, the task is done from the user's point of view. ";
 acc_prompt += "Author high-level end-to-end scenarios (and executable tests in this repo's convention). ";
 acc_prompt += "Cover happy path, empty/error states, and user-visible quality. ";
@@ -309,31 +371,116 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
     let bounce = false;
 
     phase("Development");
-    let d_prompt = role_prefix("developer.md");
-    d_prompt += "You are the Developer. Top priority: TDD. Then Clean Code / Clean Coder. ";
-    d_prompt += "SOLID, KISS, YAGNI, DRY. Small well-named methods, not comments. Code as a poem. ";
-    d_prompt += "Test behaviour, never implementation. Write the failing test first. ";
-    d_prompt += "Implement only this task. Make the acceptance tests reachable and passing. ";
-    d_prompt += "Clear dependencies. Reuse existing modules. No spaghetti. ";
-    d_prompt += task_blob(bag) + " Plan: " + plan_json + ".";
-    d_prompt += " Acceptance note: " + json_encode(acc_note) + ".";
+    let d_base = role_prefix("developer.md");
+    d_base += compute_band("standard");
+    d_base += " You are the Developer. Top priority: TDD. Then Clean Code / Clean Coder. ";
+    d_base += "SOLID, KISS, YAGNI, DRY. Small well-named methods, not comments. Code as a poem. ";
+    d_base += "Test behaviour, never implementation. Write the failing test first. ";
+    d_base += "Implement only this assignment. Make the acceptance tests reachable and passing. ";
+    d_base += "Clear dependencies. Reuse existing modules. No spaghetti. ";
+    d_base += task_blob(bag) + " Plan: " + plan_json + ".";
+    d_base += " Acceptance note: " + json_encode(acc_note) + ".";
     if bounce_from != "" {
-        d_prompt += " You are fixing a return from " + bounce_from + ": " + json_encode(last_reason) + ".";
+        d_base += " You are fixing a return from " + bounce_from + ": " + json_encode(last_reason) + ".";
     }
-    d_prompt += " Set return_to_dev=false unless you are physically blocked. evidence = what you changed.";
-    let dev_res = agent(d_prompt, #{
-        label: "developer:" + cycle.to_string(),
-        capability_mode: "all",
-        output_schema: verdict_schema,
-    });
-    if dev_res != () && dev_res.success && is_map(dev_res.output) {
-        if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
+    d_base += " Set return_to_dev=false unless you are physically blocked. evidence = what you changed.";
+
+    let fan_out = bounce_from == "" && is_array(work_items) && work_items.len() > 1;
+    if fan_out {
+        let remaining = [];
+        let wi = 0;
+        while wi < work_items.len() {
+            remaining.push(work_items[wi]);
+            wi += 1;
+        }
+        let done_ids = [];
+        let wave = 1;
+        while remaining.len() > 0 && wave <= 8 {
+            let ready = [];
+            let blocked = [];
+            let ri = 0;
+            while ri < remaining.len() {
+                if deps_met(remaining[ri], done_ids) {
+                    ready.push(remaining[ri]);
+                } else {
+                    blocked.push(remaining[ri]);
+                }
+                ri += 1;
+            }
+            if ready.len() == 0 {
+                ready = blocked;
+                blocked = [];
+            }
+            log("Development wave " + wave.to_string() + ": " + ready.len().to_string() + " worker(s)");
+            if ready.len() == 1 {
+                let one = ready[0];
+                let d_prompt = d_base;
+                d_prompt += " Own only work item " + json_encode(item_id(one)) + ": " + json_encode(trimmed(one.summary)) + ".";
+                if is_map(one) && trimmed(one.scope) != "" {
+                    d_prompt += " Writable scope: " + json_encode(trimmed(one.scope)) + ".";
+                }
+                let dev_res = agent(d_prompt, #{
+                    label: "developer:" + cycle.to_string() + ":" + item_id(one),
+                    capability_mode: "all",
+                    output_schema: verdict_schema,
+                });
+                if dev_res != () && dev_res.success && is_map(dev_res.output) {
+                    if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
+                }
+                if item_id(one) != "" { done_ids.push(item_id(one)); }
+            } else {
+                let jobs = [];
+                let ji = 0;
+                while ji < ready.len() {
+                    let one = ready[ji];
+                    let d_prompt = d_base;
+                    d_prompt += " Own only work item " + json_encode(item_id(one)) + ": " + json_encode(trimmed(one.summary)) + ".";
+                    if is_map(one) && trimmed(one.scope) != "" {
+                        d_prompt += " Writable scope: " + json_encode(trimmed(one.scope)) + ".";
+                    }
+                    jobs.push(#{
+                        prompt: d_prompt,
+                        label: "developer:" + cycle.to_string() + ":" + item_id(one),
+                        capability_mode: "all",
+                        output_schema: verdict_schema,
+                    });
+                    ji += 1;
+                }
+                let batch = parallel(jobs);
+                let bi = 0;
+                while bi < batch.len() {
+                    let dev_res = batch[bi];
+                    if dev_res != () && dev_res.success && is_map(dev_res.output) {
+                        if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
+                    }
+                    bi += 1;
+                }
+                let di = 0;
+                while di < ready.len() {
+                    if item_id(ready[di]) != "" { done_ids.push(item_id(ready[di])); }
+                    di += 1;
+                }
+            }
+            remaining = blocked;
+            wave += 1;
+        }
+    } else {
+        let d_prompt = d_base;
+        let dev_res = agent(d_prompt, #{
+            label: "developer:" + cycle.to_string(),
+            capability_mode: "all",
+            output_schema: verdict_schema,
+        });
+        if dev_res != () && dev_res.success && is_map(dev_res.output) {
+            if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
+        }
     }
 
     if !bounce {
         phase("Cleaner");
         let c_prompt = role_prefix("cleaner.md");
-        c_prompt += "You are the Cleaner. Same behaviour, cleaner design. ";
+        c_prompt += compute_band("standard");
+        c_prompt += " You are the Cleaner. Same behaviour, cleaner design. ";
         c_prompt += "Remove duplication, dead dependencies, smells. Run existing tests. ";
         c_prompt += "If the feature is wrong — not merely messy — set return_to_dev=true with evidence. ";
         c_prompt += "Otherwise refactor in place and set return_to_dev=false. ";
@@ -354,7 +501,8 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
     if !bounce {
         phase("Testing");
         let t_prompt = role_prefix("tester.md");
-        t_prompt += "You are the hands-on tester. Find what TDD and acceptance tests missed. ";
+        t_prompt += compute_band("standard");
+        t_prompt += " You are the hands-on tester. Find what TDD and acceptance tests missed. ";
         t_prompt += "If a gap should have been automated, add the test. Missing tests are blockers. ";
         t_prompt += "If tests fail or quality is too poor, set return_to_dev=true with evidence. ";
         t_prompt += "If you only add passing coverage or document a truly manual step, return_to_dev=false. ";
@@ -375,7 +523,8 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
     if !bounce {
         phase("Code review");
         let r_prompt = role_prefix("reviewer.md");
-        r_prompt += "You are the Reviewer. Read the real diff (git diff / the files). Do not review from memory. ";
+        r_prompt += compute_band("deep");
+        r_prompt += " You are the Reviewer. Read the real diff (git diff / the files). Do not review from memory. ";
         r_prompt += "Correctness, design, tests, security. Missing tests are blockers. ";
         r_prompt += "Set return_to_dev=true only with evidence you inspected. Suggest concrete patches. ";
         r_prompt += task_blob(bag);
@@ -395,7 +544,8 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
     if !bounce {
         phase("Final QA Review");
         let q_prompt = role_prefix("final-qa.md");
-        q_prompt += "You are Final QA — a skeptic of the claim that this task is done. ";
+        q_prompt += compute_band("deep");
+        q_prompt += " You are Final QA — a skeptic of the claim that this task is done. ";
         q_prompt += "Do not trust earlier phase summaries. Build and start what this repo actually ships. ";
         q_prompt += "Re-run the acceptance tests yourself. Try to refute: hunt gaps and edge cases. ";
         q_prompt += "If you find a gap, set return_to_dev=true with evidence. Do not fix the product here. ";
@@ -418,7 +568,8 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
     if !bounce {
         phase("Pipeline monitoring");
         let i_prompt = role_prefix("pipeline.md");
-        i_prompt += "Final QA approved. Open a pull request (or this repo's equivalent). ";
+        i_prompt += compute_band("standard");
+        i_prompt += " Final QA approved. Open a pull request (or this repo's equivalent). ";
         i_prompt += "If a pipeline exists, wait on its real status until it is terminal. ";
         i_prompt += "Prefer a blocking watch (gh run watch --exit-status or the host equivalent) with a long command timeout (at least 45 minutes). ";
         i_prompt += "If there is no watch, recheck every 5 minutes (sleep 300) until green or failed. ";
@@ -475,7 +626,8 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
 phase("Standards");
 if finished && want_standards(bag) {
     let s_prompt = role_prefix("standards.md");
-    s_prompt += "CODING_STANDARDS.md is a living document. Update it with conventions this run actually established. ";
+    s_prompt += compute_band("standard");
+    s_prompt += " CODING_STANDARDS.md is a living document. Update it with conventions this run actually established. ";
     s_prompt += "Create it if missing. Keep it short. Do not invent a stack the repo does not use. ";
     s_prompt += "If nothing new was learned, leave the file alone and say so. ";
     s_prompt += task_blob(bag);

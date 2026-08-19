@@ -112,6 +112,7 @@ test("help names grok, codex, and copilot and does not say only grok is implemen
   assert.match(text, /\/retemper/);
   assert.match(text, /\/skills/);
   assert.match(text, /\.agents[/\\]?skills/);
+  assert.match(text, /orchestrate/);
   assert.doesNotMatch(text, /Only grok is implemented/i);
   assert.doesNotMatch(text, /Claude\/Codex\/Copilot later/);
   assert.doesNotMatch(text, /later port/i);
@@ -229,6 +230,7 @@ test("grok, Codex, and Copilot plans share one platform-neutral refsSrc", () => 
   assert.equal(grok.refsSrc, join(root, "references"));
   assert.doesNotMatch(grok.refsSrc, /\.grok[/\\]/);
   assert.equal(existsSync(join(grok.refsSrc, "architect.md")), true);
+  assert.equal(existsSync(join(grok.refsSrc, "orchestrator.md")), true);
   assert.equal(existsSync(join(grok.refsSrc, "final-qa.md")), true);
   const finalQa = readFileSync(join(grok.refsSrc, "final-qa.md"), "utf8");
   assert.match(finalQa, /skeptic/i);
@@ -269,6 +271,15 @@ test("shipped skill states the cycle rules from PHASES and launch flags", () => 
   assert.doesNotMatch(body, /\/workflow resume retemper/);
 });
 
+test("describe(grok) names the workflow and orchestrate skill", () => {
+  const plan = planInstall({ platform: "grok", scope: "user" });
+  const text = describe(plan, { dryRun: true, skipDeps: false });
+  assert.match(text, /platform=grok/);
+  assert.match(text, /orchestrate:/);
+  assert.match(text, /\.rhai/);
+  assert.match(plan.orchestrateDest, /[/\\]\.grok[/\\]skills[/\\]orchestrate$/);
+});
+
 test("describe(codex|copilot) names .agents/skills and does not use a .rhai payload", () => {
   for (const platform of SKILL_PLATFORMS) {
     const plan = planInstall({ platform, scope: "user" });
@@ -276,6 +287,7 @@ test("describe(codex|copilot) names .agents/skills and does not use a .rhai payl
     assert.match(text, new RegExp(`platform=${platform}`));
     assert.match(text, /\.agents[/\\]skills/);
     assert.match(text, /retemper/);
+    assert.match(text, /orchestrate:/);
     assert.match(text, /grill-me/);
     assert.match(text, /grilling/);
     assert.doesNotMatch(text, /\.rhai/);
@@ -322,6 +334,11 @@ test("CLI --skip-deps Codex project install writes SKILL.md plus grill skills", 
       assert.equal(existsSync(join(target, ".agents", "skills", "grill-me", "SKILL.md")), true);
       assert.equal(existsSync(join(target, ".agents", "skills", "grilling", "SKILL.md")), true);
       assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "references", "architect.md")), true);
+      assert.equal(existsSync(join(target, ".agents", "skills", "orchestrate", "SKILL.md")), true);
+      assert.equal(
+        existsSync(join(target, ".agents", "skills", "orchestrate", "references", "orchestrator.md")),
+        true,
+      );
       const pipeline = readFileSync(
         join(target, ".agents", "skills", "retemper", "references", "pipeline.md"),
         "utf8",

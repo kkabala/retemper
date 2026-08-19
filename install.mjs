@@ -74,6 +74,7 @@ export function helpText() {
     "",
     "A project-agnostic plan → accept → build → harden → review → QA → PR cycle.",
     "Platforms: grok (Grok Build workflow); codex and copilot (shared Agent Skill).",
+    "Also installs the orchestrate skill (generic coordinator) next to grill-me.",
     "",
     "Usage:",
     "  node install.mjs --platform grok --scope user [--dry-run] [--skip-deps]",
@@ -225,57 +226,72 @@ function recordInstall(plan) {
 function sharedSources() {
   return {
     refsSrc: join(here, "references"),
+    orchestrateSrc: join(here, ".agents", "skills", "orchestrate"),
     vendorGrillMe: join(here, "vendor", "grill-me"),
     vendorGrilling: join(here, "vendor", "grilling"),
     standardsSrc: join(here, "templates", "CODING_STANDARDS.md"),
   };
 }
 
+function withOrchestrate(plan, dest, sources) {
+  plan.orchestrateSrc = sources.orchestrateSrc;
+  plan.orchestrateDest = dest;
+  return plan;
+}
+
 function planGrok(opts, sources) {
   const workflowSrc = join(here, ".grok", "workflows", `${NAME}.rhai`);
   if (opts.scope === "user") {
     const home = grokHome();
-    return {
-      platform: "grok",
-      scope: "user",
-      targetRoot: home,
-      workflowSrc,
-      workflowDest: join(home, "workflows", `${NAME}.rhai`),
-      skillSrc: null,
-      skillDest: null,
-      refsSrc: sources.refsSrc,
-      refsDest: join(home, "retemper", "references"),
-      skillDests: [
-        join(home, "skills", "grill-me"),
-        join(home, "skills", "grilling"),
-      ],
-      vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
-      standardsSrc: sources.standardsSrc,
-      standardsDest: null,
-      fetchArgs: [...GRILL_FETCH, "--global"],
-    };
+    return withOrchestrate(
+      {
+        platform: "grok",
+        scope: "user",
+        targetRoot: home,
+        workflowSrc,
+        workflowDest: join(home, "workflows", `${NAME}.rhai`),
+        skillSrc: null,
+        skillDest: null,
+        refsSrc: sources.refsSrc,
+        refsDest: join(home, "retemper", "references"),
+        skillDests: [
+          join(home, "skills", "grill-me"),
+          join(home, "skills", "grilling"),
+        ],
+        vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+        standardsSrc: sources.standardsSrc,
+        standardsDest: null,
+        fetchArgs: [...GRILL_FETCH, "--global"],
+      },
+      join(home, "skills", "orchestrate"),
+      sources,
+    );
   }
 
   const target = resolve(opts.target || process.cwd());
-  return {
-    platform: "grok",
-    scope: "project",
-    targetRoot: target,
-    workflowSrc,
-    workflowDest: join(target, ".grok", "workflows", `${NAME}.rhai`),
-    skillSrc: null,
-    skillDest: null,
-    refsSrc: sources.refsSrc,
-    refsDest: join(target, ".grok", "retemper", "references"),
-    skillDests: [
-      join(target, ".grok", "skills", "grill-me"),
-      join(target, ".grok", "skills", "grilling"),
-    ],
-    vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
-    standardsSrc: sources.standardsSrc,
-    standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-    fetchArgs: [...GRILL_FETCH],
-  };
+  return withOrchestrate(
+    {
+      platform: "grok",
+      scope: "project",
+      targetRoot: target,
+      workflowSrc,
+      workflowDest: join(target, ".grok", "workflows", `${NAME}.rhai`),
+      skillSrc: null,
+      skillDest: null,
+      refsSrc: sources.refsSrc,
+      refsDest: join(target, ".grok", "retemper", "references"),
+      skillDests: [
+        join(target, ".grok", "skills", "grill-me"),
+        join(target, ".grok", "skills", "grilling"),
+      ],
+      vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+      standardsSrc: sources.standardsSrc,
+      standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
+      fetchArgs: [...GRILL_FETCH],
+    },
+    join(target, ".grok", "skills", "orchestrate"),
+    sources,
+  );
 }
 
 function planSkillPlatform(platform, opts, sources) {
@@ -283,10 +299,38 @@ function planSkillPlatform(platform, opts, sources) {
   if (opts.scope === "user") {
     const home = agentsHome();
     const skillDest = join(home, "skills", NAME);
-    return {
+    return withOrchestrate(
+      {
+        platform,
+        scope: "user",
+        targetRoot: home,
+        workflowSrc: null,
+        workflowDest: null,
+        skillSrc,
+        skillDest,
+        refsSrc: sources.refsSrc,
+        refsDest: join(skillDest, "references"),
+        skillDests: [
+          join(home, "skills", "grill-me"),
+          join(home, "skills", "grilling"),
+        ],
+        vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
+        standardsSrc: sources.standardsSrc,
+        standardsDest: null,
+        fetchArgs: [...GRILL_FETCH, "--global"],
+      },
+      join(home, "skills", "orchestrate"),
+      sources,
+    );
+  }
+
+  const target = resolve(opts.target || process.cwd());
+  const skillDest = join(target, ".agents", "skills", NAME);
+  return withOrchestrate(
+    {
       platform,
-      scope: "user",
-      targetRoot: home,
+      scope: "project",
+      targetRoot: target,
       workflowSrc: null,
       workflowDest: null,
       skillSrc,
@@ -294,37 +338,17 @@ function planSkillPlatform(platform, opts, sources) {
       refsSrc: sources.refsSrc,
       refsDest: join(skillDest, "references"),
       skillDests: [
-        join(home, "skills", "grill-me"),
-        join(home, "skills", "grilling"),
+        join(target, ".agents", "skills", "grill-me"),
+        join(target, ".agents", "skills", "grilling"),
       ],
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
-      standardsDest: null,
-      fetchArgs: [...GRILL_FETCH, "--global"],
-    };
-  }
-
-  const target = resolve(opts.target || process.cwd());
-  const skillDest = join(target, ".agents", "skills", NAME);
-  return {
-    platform,
-    scope: "project",
-    targetRoot: target,
-    workflowSrc: null,
-    workflowDest: null,
-    skillSrc,
-    skillDest,
-    refsSrc: sources.refsSrc,
-    refsDest: join(skillDest, "references"),
-    skillDests: [
-      join(target, ".agents", "skills", "grill-me"),
-      join(target, ".agents", "skills", "grilling"),
-    ],
-    vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
-    standardsSrc: sources.standardsSrc,
-    standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-    fetchArgs: [...GRILL_FETCH],
-  };
+      standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
+      fetchArgs: [...GRILL_FETCH],
+    },
+    join(target, ".agents", "skills", "orchestrate"),
+    sources,
+  );
 }
 
 export function planInstall(opts) {
@@ -351,6 +375,9 @@ export function describe(plan, opts) {
   }
   if (plan.skillDest) {
     lines.push(`skill: ${plan.skillSrc} → ${plan.skillDest}`);
+  }
+  if (plan.orchestrateDest) {
+    lines.push(`orchestrate: ${plan.orchestrateSrc} → ${plan.orchestrateDest}`);
   }
   lines.push(`references: ${plan.refsSrc} → ${plan.refsDest}`);
   lines.push(`grill-me dependency step: ${plan.fetchArgs.join(" ")}`);
@@ -382,6 +409,15 @@ export function apply(plan, opts) {
     copyDir(plan.skillSrc, plan.skillDest);
   }
   copyDir(plan.refsSrc, plan.refsDest);
+  if (plan.orchestrateSrc && plan.orchestrateDest) {
+    copyDir(plan.orchestrateSrc, plan.orchestrateDest);
+    const destRefDir = join(plan.orchestrateDest, "references");
+    mkdirSync(destRefDir, { recursive: true });
+    writeFileSync(
+      join(destRefDir, "orchestrator.md"),
+      readFileSync(join(plan.refsSrc, "orchestrator.md")),
+    );
+  }
   for (let i = 0; i < plan.skillDests.length; i += 1) {
     copyDir(plan.vendorSkills[i], plan.skillDests[i]);
   }

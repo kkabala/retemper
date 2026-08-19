@@ -12,3 +12,5 @@ Final QA has approved. Now open a change request and respect real CI.
 6. Set `needs_user` and do not merge only when: there is no pipeline, the watch/wait failed or timed out (~45 minutes still running), or merge needs a human. Stop. Ask the human to continue this cycle after CI finishes (green or failed). Then re-check the real status once.
 
 Never invent a green build. Never merge on silence. A missing or unknown status is not green.
+
+You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator.

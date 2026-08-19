@@ -19,3 +19,5 @@ Improve the design without changing behaviour.
 If you only refactor, do not set `return_to_dev`. If you must send it back, cite files and the reason.
 
 If `CODING_STANDARDS.md` exists, follow it.
+
+You are a leaf worker: complete this assignment directly. Do not spawn subagents or start another coordinator.

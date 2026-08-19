@@ -181,7 +181,11 @@ test("role references stay stack-agnostic and match the named sources", () => {
 
   assert.match(architect, /hexagonal/i);
   assert.match(architect, /grill/i);
+  assert.match(architect, /Do not interview/i);
   assert.match(architect, /CODING_STANDARDS\.md/);
+  const orchestrator = readFileSync(join(refs, "orchestrator.md"), "utf8");
+  assert.match(orchestrator, /Stay available/i);
+  assert.match(orchestrator, /\bdeep\b/);
   assert.doesNotMatch(architect, /React Native/);
   assert.doesNotMatch(architect, /npx nx/);
   assert.doesNotMatch(architect, /Jira/);
@@ -244,6 +248,8 @@ test("workflow script declares the same phase titles and the no-skip loop", () =
   assert.match(source, /grill-me/);
   assert.match(source, /update_standards/);
   assert.match(source, /wait on its real status until it is terminal/);
+  assert.match(source, /compute_band\("deep"\)/);
+  assert.match(source, /compute_band\("standard"\)/);
   assert.doesNotMatch(source, /React Native/);
   assert.doesNotMatch(source, /npx nx/);
   assert.doesNotMatch(source, /Jira MCP/);
