@@ -5,6 +5,8 @@
  *   node install.mjs --help
  *   node install.mjs --dry-run --platform grok --scope user
  *   node install.mjs --platform grok --scope user
+ *   node install.mjs --platform grok,codex --scope user
+ *   node install.mjs --platform grok --platform copilot --scope user
  *   node install.mjs --platform grok --scope project --target /path/to/repo
  *   node install.mjs --dry-run --platform codex --scope user
  *   node install.mjs --platform copilot --scope project --target /path/to/repo
@@ -41,12 +43,44 @@ const GRILL_FETCH = [
   "--copy",
 ];
 
+function splitPlatformList(value) {
+  return String(value)
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function uniqueNames(names) {
+  const seen = new Set();
+  const out = [];
+  for (const name of names) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+function takePlatforms(rest, index, token) {
+  const names = [];
+  if (token.startsWith("--platform=")) {
+    names.push(...splitPlatformList(token.slice("--platform=".length)));
+    return { names, index };
+  }
+  let i = index;
+  while (i + 1 < rest.length && !String(rest[i + 1]).startsWith("-")) {
+    names.push(...splitPlatformList(rest[i + 1]));
+    i += 1;
+  }
+  return { names, index: i };
+}
+
 export function parseArgs(argv) {
   const out = {
     help: false,
     dryRun: false,
     skipDeps: false,
-    platform: "",
+    platforms: [],
     scope: "",
     target: "",
     standards: false,
@@ -60,11 +94,15 @@ export function parseArgs(argv) {
     else if (token === "--skip-deps") out.skipDeps = true;
     else if (token === "--standards") out.standards = true;
     else if (token === "--update") out.update = true;
-    else if (token === "--platform") out.platform = String(rest[++i] || "");
-    else if (token === "--scope") out.scope = String(rest[++i] || "");
+    else if (token === "--platform" || token.startsWith("--platform=")) {
+      const taken = takePlatforms(rest, i, token);
+      out.platforms.push(...taken.names);
+      i = taken.index;
+    } else if (token === "--scope") out.scope = String(rest[++i] || "");
     else if (token === "--target") out.target = String(rest[++i] || "");
     else throw new Error(`Unknown argument: ${token}`);
   }
+  out.platforms = uniqueNames(out.platforms);
   return out;
 }
 
@@ -78,13 +116,16 @@ export function helpText() {
     "",
     "Usage:",
     "  node install.mjs --platform grok --scope user [--dry-run] [--skip-deps]",
+    "  node install.mjs --platform grok,codex --scope user",
+    "  node install.mjs --platform grok --platform copilot --scope user",
     "  node install.mjs --platform grok --scope project --target <repo> [--standards]",
     "  node install.mjs --platform codex --scope user [--dry-run] [--skip-deps]",
     "  node install.mjs --platform copilot --scope project --target <repo> [--standards]",
     "  node install.mjs --update [--dry-run] [--skip-deps] [--standards]",
     "",
     "Options:",
-    "  --platform grok|codex|copilot",
+    "  --platform grok|codex|copilot[,...]",
+    "                           Repeat the flag, commas, or spaces: grok,codex or grok codex",
     "                           grok → .rhai workflow under ~/.grok",
     "                           codex and copilot → same SKILL.md under .agents/skills",
     "  --scope user|project     grok user → ~/.grok/workflows   grok project → <repo>/.grok/workflows",
@@ -114,7 +155,7 @@ export function grokHome() {
 }
 
 export function agentsHome() {
-  return join(homedir(), ".agents");
+  return process.env.AGENTS_HOME ? resolve(process.env.AGENTS_HOME) : join(homedir(), ".agents");
 }
 
 export function retemperHome() {
@@ -351,11 +392,26 @@ function planSkillPlatform(platform, opts, sources) {
   );
 }
 
+function unsupportedPlatformError(platform) {
+  return new Error(
+    `Unsupported platform "${platform || "(missing)"}". Pick platform=grok, platform=codex, or platform=copilot.`,
+  );
+}
+
+function assertSupportedPlatforms(platforms) {
+  if (!platforms.length) {
+    throw unsupportedPlatformError("");
+  }
+  for (const platform of platforms) {
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+      throw unsupportedPlatformError(platform);
+    }
+  }
+}
+
 export function planInstall(opts) {
   if (!SUPPORTED_PLATFORMS.includes(opts.platform)) {
-    throw new Error(
-      `Unsupported platform "${opts.platform || "(missing)"}". Pick platform=grok, platform=codex, or platform=copilot.`,
-    );
+    throw unsupportedPlatformError(opts.platform);
   }
   if (!SUPPORTED_SCOPES.includes(opts.scope)) {
     throw new Error(`Unsupported scope "${opts.scope || "(missing)"}". Pick scope=user or scope=project.`);
@@ -513,21 +569,34 @@ function runUpdate(opts) {
   return failed === 0 ? 0 : 1;
 }
 
-function runInstall(opts) {
-  const plan = planInstall(opts);
+function installOne(platform, opts) {
+  const plan = planInstall({ ...opts, platform });
   console.log(describe(plan, opts));
   if (opts.dryRun) {
-    return 0;
+    return;
   }
   applyPlan(plan, opts);
   recordInstall(plan);
   console.log(`installed ${NAME} (${plan.scope})`);
-  return 0;
+}
+
+function runInstall(opts) {
+  assertSupportedPlatforms(opts.platforms);
+  let failed = 0;
+  for (const platform of opts.platforms) {
+    try {
+      installOne(platform, opts);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : error);
+      failed += 1;
+    }
+  }
+  return failed === 0 ? 0 : 1;
 }
 
 export function main(argv = process.argv) {
   const opts = parseArgs(argv);
-  if (opts.help || (!opts.update && !opts.platform && !opts.scope)) {
+  if (opts.help || (!opts.update && !opts.platforms.length && !opts.scope)) {
     console.log(helpText());
     return 0;
   }

@@ -17,6 +17,7 @@ Keep this file short. Put only rules a stranger would miss.
 - Destinations this machine has already installed into live in `~/.retemper/installs.txt` (or `$RETEMPER_HOME/installs.txt`), not in the clone.
 - Role files live once in `references/`. The installer copies that tree into each platform dest. Do not fork platform-specific copies in source.
 - Thin skills live under `.agents/skills/<name>/SKILL.md`. Extra skills (`orchestrate`, grill-me) are first-class dests — do not stuff them into the `vendorSkills` / `skillDests` parallel arrays used for grill vendor copies.
+- `--platform` is a list: commas, spaces after one flag, or a repeated flag. Names stay unique in the given order. An unknown name fails before any dest is written.
 
 ## Orchestration
 
@@ -27,7 +28,7 @@ Keep this file short. Put only rules a stranger would miss.
 
 - Test behaviour, not implementation.
 - Installer CLI tests that apply or update must set `RETEMPER_HOME` to a temp dir so they never write the real `~/.retemper`.
-- Grok user-scope CLI tests must also set `GROK_HOME` to a temp dir. Do not write into the real `~/.agents` from tests.
+- Grok user-scope CLI tests must also set `GROK_HOME` to a temp dir. Skill user-scope CLI tests must set `AGENTS_HOME` to a temp dir. Do not write into the real `~/.agents` from tests.
 
 ## Style
 
