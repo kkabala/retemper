@@ -74,8 +74,8 @@ test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
     "--target",
     "/repo",
   ]);
-  assert.equal(grok.platform, "grok");
-  assert.equal(codex.platform, "codex");
+  assert.deepEqual(grok.platforms, ["grok"]);
+  assert.deepEqual(codex.platforms, ["codex"]);
   assert.equal(grok.scope, "user");
   assert.equal(codex.scope, "project");
   assert.equal(grok.dryRun, true);
@@ -98,9 +98,70 @@ test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
     "user",
     "--dry-run",
   ]);
-  assert.equal(copilot.platform, "copilot");
+  assert.deepEqual(copilot.platforms, ["copilot"]);
   assert.equal(copilot.scope, "user");
   assert.equal(copilot.dryRun, true);
+});
+
+test("parseArgs collects multiple platforms from spaces, commas, repeats, and --platform=", () => {
+  const spaced = parseArgs([
+    "node",
+    "install.mjs",
+    "--platform",
+    "grok",
+    "codex",
+    "--scope",
+    "user",
+  ]);
+  assert.deepEqual(spaced.platforms, ["grok", "codex"]);
+  assert.equal(spaced.scope, "user");
+
+  const commas = parseArgs([
+    "node",
+    "install.mjs",
+    "--platform",
+    "grok, copilot",
+    "--scope",
+    "project",
+  ]);
+  assert.deepEqual(commas.platforms, ["grok", "copilot"]);
+
+  const repeats = parseArgs([
+    "node",
+    "install.mjs",
+    "--platform",
+    "grok",
+    "--platform",
+    "codex",
+    "--scope",
+    "user",
+  ]);
+  assert.deepEqual(repeats.platforms, ["grok", "codex"]);
+
+  const equals = parseArgs([
+    "node",
+    "install.mjs",
+    "--platform=grok,codex",
+    "--scope",
+    "user",
+  ]);
+  assert.deepEqual(equals.platforms, ["grok", "codex"]);
+
+  const mixed = parseArgs([
+    "node",
+    "install.mjs",
+    "--platform",
+    "grok",
+    "--platform=codex,copilot",
+    "--platform",
+    "grok",
+  ]);
+  assert.deepEqual(mixed.platforms, ["grok", "codex", "copilot"]);
+
+  assert.throws(
+    () => parseArgs(["node", "install.mjs", "--platform=grok", "codex"]),
+    /Unknown argument: codex/,
+  );
 });
 
 test("help names grok, codex, and copilot and does not say only grok is implemented", () => {
@@ -119,6 +180,7 @@ test("help names grok, codex, and copilot and does not say only grok is implemen
   assert.match(text, /--update/);
   assert.match(text, /installs\.txt/);
   assert.match(text, /RETEMPER_HOME/);
+  assert.match(text, /--platform grok,codex|--platform grok --platform/);
 });
 
 test("planInstall accepts codex and keeps grok destinations unchanged", () => {
@@ -373,6 +435,17 @@ test("retemperHome and installsPath honor RETEMPER_HOME", () => {
   } finally {
     if (prev === undefined) delete process.env.RETEMPER_HOME;
     else process.env.RETEMPER_HOME = prev;
+  }
+});
+
+test("agentsHome honors AGENTS_HOME", () => {
+  const prev = process.env.AGENTS_HOME;
+  process.env.AGENTS_HOME = "/tmp/retemper-agents-override";
+  try {
+    assert.equal(agentsHome(), "/tmp/retemper-agents-override");
+  } finally {
+    if (prev === undefined) delete process.env.AGENTS_HOME;
+    else process.env.AGENTS_HOME = prev;
   }
 });
 
@@ -774,6 +847,184 @@ test("CLI records grok and codex project dests on the same repo", () => {
       assert.equal(existsSync(join(target, ".grok", "workflows", "retemper.rhai")), true);
       const lines = readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n");
       assert.deepEqual(lines, [`grok project ${target}`, `codex project ${target}`]);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform grok codex project install writes both dests and two tracking lines", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-multi-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--platform", "grok", "codex", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /platform=grok/);
+      assert.match(result.stdout, /platform=codex/);
+      assert.equal(existsSync(join(target, ".grok", "workflows", "retemper.rhai")), true);
+      assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), true);
+      assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
+        `grok project ${target}`,
+        `codex project ${target}`,
+      ]);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform=grok,codex and repeated --platform install the same dests", () => {
+  const commaTarget = mkdtempSync(join(tmpdir(), "retemper-comma-"));
+  const repeatTarget = mkdtempSync(join(tmpdir(), "retemper-repeat-"));
+  withHome((home) => {
+    try {
+      const commas = cli(
+        ["--platform=grok,codex", "--scope", "project", "--target", commaTarget, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      const repeats = cli(
+        [
+          "--platform",
+          "grok",
+          "--platform",
+          "codex",
+          "--scope",
+          "project",
+          "--target",
+          repeatTarget,
+          "--skip-deps",
+        ],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(commas.status, 0, commas.stderr);
+      assert.equal(repeats.status, 0, repeats.stderr);
+      assert.equal(existsSync(join(commaTarget, ".grok", "workflows", "retemper.rhai")), true);
+      assert.equal(existsSync(join(commaTarget, ".agents", "skills", "retemper", "SKILL.md")), true);
+      assert.equal(existsSync(join(repeatTarget, ".grok", "workflows", "retemper.rhai")), true);
+      assert.equal(existsSync(join(repeatTarget, ".agents", "skills", "retemper", "SKILL.md")), true);
+    } finally {
+      rmSync(commaTarget, { recursive: true, force: true });
+      rmSync(repeatTarget, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI dry-run with several platforms prints each plan and writes nothing", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-multidry-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--dry-run", "--platform", "grok,codex", "--scope", "project", "--target", target],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /platform=grok/);
+      assert.match(result.stdout, /platform=codex/);
+      assert.equal(existsSync(join(target, ".grok")), false);
+      assert.equal(existsSync(join(target, ".agents")), false);
+      assert.equal(existsSync(join(home, "installs.txt")), false);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform grok claude rejects the unknown name and writes nothing", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-badplat-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--platform", "grok", "claude", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Unsupported platform "claude"/);
+      assert.equal(existsSync(join(target, ".grok")), false);
+      assert.equal(existsSync(join(home, "installs.txt")), false);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform grok,codex --scope user writes grok and skill dests under test homes", () => {
+  const grok = mkdtempSync(join(tmpdir(), "retemper-user-grok-"));
+  const agents = mkdtempSync(join(tmpdir(), "retemper-user-agents-"));
+  withHome((home) => {
+    try {
+      const result = cli(["--platform", "grok", "codex", "--scope", "user", "--skip-deps"], {
+        RETEMPER_HOME: home,
+        GROK_HOME: grok,
+        AGENTS_HOME: agents,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(existsSync(join(grok, "workflows", "retemper.rhai")), true);
+      assert.equal(existsSync(join(agents, "skills", "retemper", "SKILL.md")), true);
+      assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
+        `grok user ${grok}`,
+        `codex user ${agents}`,
+      ]);
+    } finally {
+      rmSync(grok, { recursive: true, force: true });
+      rmSync(agents, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform with only commas fails and writes nothing", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-emptyplat-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--platform", ",", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Unsupported platform/);
+      assert.equal(existsSync(join(target, ".grok")), false);
+      assert.equal(existsSync(join(home, "installs.txt")), false);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform grok,codex,grok records each platform once", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-dedup-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--platform", "grok,codex,grok", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
+        `grok project ${target}`,
+        `codex project ${target}`,
+      ]);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI --platform codex copilot records two skill lines on the same dest tree", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-skills-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--platform", "codex", "copilot", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), true);
+      assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
+        `codex project ${target}`,
+        `copilot project ${target}`,
+      ]);
     } finally {
       rmSync(target, { recursive: true, force: true });
     }

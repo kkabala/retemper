@@ -112,7 +112,7 @@ Role files live once in `references/` (orchestrator, architect, acceptance, deve
 | Platform | User scope | Project scope | Payload |
 | --- | --- | --- | --- |
 | Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai`, `retemper/references/`, `.grok/skills/orchestrate/` |
-| Codex / Copilot | `~/.agents/skills` | `<repo>/.agents/skills` | `retemper/SKILL.md`, `retemper/references/`, `orchestrate/` |
+| Codex / Copilot | `~/.agents/skills` (or `$AGENTS_HOME/skills`) | `<repo>/.agents/skills` | `retemper/SKILL.md`, `retemper/references/`, `orchestrate/` |
 
 `--platform copilot` and `--platform codex` write the same dests. Installing one is enough for both skill-based harnesses. Official Copilot roots also include `.github/skills` and `~/.copilot/skills`; this installer does **not** duplicate the tree there.
 
@@ -122,12 +122,17 @@ User scope (every project):
 node install.mjs --platform grok --scope user
 node install.mjs --platform codex --scope user
 node install.mjs --platform copilot --scope user
+node install.mjs --platform grok,codex --scope user
+node install.mjs --platform grok --platform copilot --scope user
 ```
+
+`--platform` takes one or more names. Repeat the flag, separate with commas, or put spaces after one `--platform`. Names are de-duplicated in the order given. `--update` still ignores `--platform` and uses the tracking file.
 
 Project scope:
 
 ```bash
 node install.mjs --platform grok --scope project --target /path/to/repo
+node install.mjs --platform grok,codex --scope project --target /path/to/repo
 node install.mjs --platform copilot --scope project --target /path/to/repo
 ```
 
