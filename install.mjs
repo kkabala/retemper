@@ -46,9 +46,11 @@ const GRILL_SKILLS = [
   { name: "grilling", source: "mattpocock/skills/skills/productivity/grilling" },
 ];
 
-function grillFetchAgent(platform) {
-  return platform === "grok" ? "grok" : "cline";
-}
+const GRILL_FETCH_AGENT = {
+  grok: "grok",
+  codex: "cline",
+  copilot: "cline",
+};
 
 function grillFetchCommands(scope, platform) {
   return GRILL_SKILLS.map(({ name, source }) => {
@@ -63,7 +65,7 @@ function grillFetchCommands(scope, platform) {
       "-y",
       "--copy",
       "--agent",
-      grillFetchAgent(platform),
+      GRILL_FETCH_AGENT[platform],
     ];
     if (scope === "user") args.push("--global");
     return args;
@@ -174,11 +176,8 @@ export function helpText() {
     "  grill-me  (mattpocock/skills) — front door; body is “run a grilling session”",
     "  grilling  (mattpocock/skills) — the interview primitive grill-me requires",
     `  Fetch: ${GRILL_SKILLS.map(({ source }) => `npx --yes skills@latest add ${source}`).join(" ; ")}`,
-    "          [--global for user scope] [--agent grok | cline]. Pin --agent to the dest",
-    "          this installer writes (grok → ~/.grok/skills, skill platforms → ~/.agents/skills",
-    "          via cline). Unbounded -y discovery also hits PromptScript, which has no global dest.",
-    "          Each skill is added from its folder so sibling SKILL.md files with unquoted",
-    "          descriptions are never parsed.",
+    "          [--global for user scope]. Each skill is added from its folder so sibling",
+    "          SKILL.md files with unquoted descriptions are never parsed.",
     "  Offline fallback: vendor/grill-me and vendor/grilling shipped in this package.",
   ].join("\n");
 }
@@ -330,11 +329,12 @@ function withOrchestrate(plan, dest, sources) {
 
 function planGrok(opts, sources) {
   const workflowSrc = join(here, ".grok", "workflows", `${NAME}.rhai`);
+  const platform = opts.platform;
   if (opts.scope === "user") {
     const home = grokHome();
     return withOrchestrate(
       {
-        platform: "grok",
+        platform,
         scope: "user",
         targetRoot: home,
         workflowSrc,
@@ -350,7 +350,7 @@ function planGrok(opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchCommands: grillFetchCommands("user", "grok"),
+        fetchCommands: grillFetchCommands("user", platform),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -360,7 +360,7 @@ function planGrok(opts, sources) {
   const target = resolve(opts.target || process.cwd());
   return withOrchestrate(
     {
-      platform: "grok",
+      platform,
       scope: "project",
       targetRoot: target,
       workflowSrc,
@@ -376,7 +376,7 @@ function planGrok(opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchCommands: grillFetchCommands("project", "grok"),
+      fetchCommands: grillFetchCommands("project", platform),
     },
     join(target, ".grok", "skills", "orchestrate"),
     sources,

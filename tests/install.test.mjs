@@ -184,8 +184,7 @@ test("help names grok, codex, and copilot and does not say only grok is implemen
   assert.match(text, /--platform grok,codex|--platform grok --platform/);
   assert.match(text, /skills\/productivity\/grill-me/);
   assert.match(text, /skills\/productivity\/grilling/);
-  assert.match(text, /--agent grok/);
-  assert.match(text, /PromptScript/);
+  assert.doesNotMatch(text, /PromptScript/);
 });
 
 test("planInstall accepts codex and keeps grok destinations unchanged", () => {
@@ -300,7 +299,7 @@ function fetchAgent(argv) {
   return argv[index + 1];
 }
 
-test("grill fetch pins --agent to dest-matching harnesses and skips PromptScript", () => {
+test("grill fetch --agent follows the selected platform dest", () => {
   const grokUser = planInstall({ platform: "grok", scope: "user" });
   const grokProject = planInstall({
     platform: "grok",
@@ -326,18 +325,7 @@ test("grill fetch pins --agent to dest-matching harnesses and skips PromptScript
     assert.equal(fetchAgent(argv), "cline");
   }
 
-  for (const argv of [
-    ...grokUser.fetchCommands,
-    ...codexUser.fetchCommands,
-    ...copilotUser.fetchCommands,
-  ]) {
-    assert.equal(argv.includes("promptscript"), false);
-    assert.equal(argv.includes("codex"), false);
-    assert.equal(argv.includes("github-copilot"), false);
-  }
-
-  const described = describe(grokUser, { dryRun: true, skipDeps: false });
-  assert.match(described, /--agent grok/);
+  assert.match(describe(grokUser, { dryRun: true, skipDeps: false }), /--agent grok/);
   assert.match(describe(codexUser, { dryRun: true, skipDeps: false }), /--agent cline/);
 });
 

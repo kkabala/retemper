@@ -188,7 +188,7 @@ npm run update
 npm run update:dry
 ```
 
-Every platform then fetches Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills/skills/productivity/<skill>` with `--agent grok` (Grok dests) or `--agent cline` (`.agents/skills` dests). Without `--agent`, `-y --global` also asks PromptScript to install, and PromptScript has no global dest. Adding the whole catalog would make the skills CLI parse every `SKILL.md`; several siblings have unquoted `description:` values with `: ` and are skipped with YAML parse errors. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
+Offline copies of grill-me and grilling in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
 
 Codex invocation after install is `$retemper` or `/skills`, not `/workflow retemper`. Copilot invocation is `/retemper` or `/skills`.
 
