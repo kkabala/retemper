@@ -11,7 +11,7 @@ for **Grok Build**, **Codex**, and **GitHub Copilot**.
 
 **Grok:** the control plane is `/workflow retemper`. When that workflow is available, do **not** walk `.agents/skills/retemper/SKILL.md` or simulate the cycle in chat. Codex stays `$retemper`; Copilot stays `/retemper`.
 
-Codex and Copilot share one shipped skill: `.agents/skills/retemper/`. The installer writes that tree under `.agents/skills` (user or project). There is no second copy under `.github/skills` or `~/.copilot/skills`.
+Codex and Copilot share one shipped skill: `.agents/skills/retemper/`. The installer writes that tree under `.agents/skills` (user or project). Codex CLI user discovery is `$CODEX_HOME/skills` (default `~/.codex/skills`), so a user-scope install also **symlinks** `retemper`, `orchestrate`, `grill-me`, and `grilling` there. There is no second copy under `.github/skills` or `~/.copilot/skills`.
 
 ## Cycle
 
@@ -118,7 +118,7 @@ Role files live once in `references/` (orchestrator, architect, acceptance, deve
 | Platform | User scope | Project scope | Payload |
 | --- | --- | --- | --- |
 | Grok | `~/.grok` (or `$GROK_HOME`) | `<repo>/.grok` | `.grok/workflows/retemper.rhai`, `retemper/references/`, `.grok/skills/orchestrate/` |
-| Codex / Copilot | `~/.agents/skills` (or `$AGENTS_HOME/skills`) | `<repo>/.agents/skills` | `retemper/SKILL.md`, `retemper/references/`, `orchestrate/` |
+| Codex / Copilot | `~/.agents/skills` (or `$AGENTS_HOME/skills`); Codex CLI also `$CODEX_HOME/skills` (symlink) | `<repo>/.agents/skills` | `retemper/SKILL.md`, `retemper/references/`, `orchestrate/` |
 
 `--platform copilot` and `--platform codex` write the same dests. Installing one is enough for both skill-based harnesses. Official Copilot roots also include `.github/skills` and `~/.copilot/skills`; this installer does **not** duplicate the tree there.
 
@@ -188,7 +188,7 @@ npm run update
 npm run update:dry
 ```
 
-Every platform then fetches Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills`. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
+Every platform then fetches Matt Pocock’s **grill-me** and **grilling** via `npx skills@latest add mattpocock/skills/skills/productivity/<skill>`. Adding the whole catalog would make the skills CLI parse every `SKILL.md`; several siblings have unquoted `description:` values with `: ` and are skipped with YAML parse errors. Offline copies in `vendor/` are MIT-licensed (Copyright 2026 Matt Pocock) — see `vendor/LICENSE` and `vendor/NOTICE`.
 
 Codex invocation after install is `$retemper` or `/skills`, not `/workflow retemper`. Copilot invocation is `/retemper` or `/skills`.
 
