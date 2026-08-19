@@ -15,9 +15,14 @@ skill (the installer places it there) and follow it. Stay language- and
 stack-agnostic: use the project’s own tools and layout. Do not require Jira,
 NX, or a particular UI toolkit.
 
-Stay available to the user. Delegate specialist work when the harness can
-spawn a child; otherwise run that role yourself. Fan out one worker per
-ready independent item. Integrate and verify. Keep approvals with you.
+Stay available to the user. You must dispatch specialist work when spawn
+works. Run the role yourself only when you cannot spawn. Fan out one worker
+per ready independent item. Integrate and verify. Keep approvals with you.
+
+Do not cancel required work because it is slow. A second request while you
+are already coordinating is more work in this run, not a one-off that ends
+coordination.
 
 This skill is not a delivery cycle. For plan → accept → build → harden →
-review → QA → PR, use retemper.
+review → QA → PR, use retemper. On Grok Build that means `/workflow retemper`,
+not a skill walkthrough.

@@ -9,18 +9,20 @@ for **Grok Build**, **Codex**, and **GitHub Copilot**.
 | Codex | Agent Skills (`retemper`, `orchestrate`) | `$retemper …` or pick **retemper** from `/skills` |
 | GitHub Copilot | same Agent Skills | `/retemper …` or pick **retemper** from `/skills` |
 
+**Grok:** the control plane is `/workflow retemper`. When that workflow is available, do **not** walk `.agents/skills/retemper/SKILL.md` or simulate the cycle in chat. Codex stays `$retemper`; Copilot stays `/retemper`.
+
 Codex and Copilot share one shipped skill: `.agents/skills/retemper/`. The installer writes that tree under `.agents/skills` (user or project). There is no second copy under `.github/skills` or `~/.copilot/skills`.
 
 ## Cycle
 
-1. **Planning** — modular, domain-driven, hexagonal / plug-in architecture. Always runs **grill-me**, even if you already have a plan or ticket. Turn grilling off only with `--no-grill` / `grill: false`.
+1. **Planning** — modular, domain-driven, hexagonal / plug-in architecture. Always runs **grill-me**, even if you already have a plan or ticket. Turn grilling off only with `--no-grill` / `grill: false`. After Planning, wait for an **explicit proceed** before Acceptance tests. Answering grill questions is not proceed.
 2. **Acceptance tests** — user-facing end-to-end criteria. If they all pass, the task is done from the user’s point of view.
 3. **Development** — TDD first, then Clean Code / Clean Coder, SOLID, KISS, YAGNI, DRY.
 4. **Cleaner** — same behaviour, cleaner design. May return to Development.
 5. **Testing** — cover what TDD and acceptance missed; automate if it was just forgotten. May return to Development.
 6. **Code review** — real diff; missing tests are blockers. May return to Development.
 7. **Final QA Review** — skeptic of “done”: boot what exists, re-run acceptance, try to break it. May return to Development.
-8. **Pipeline monitoring** — open a PR. Wait on real CI until it is terminal. If you cannot wait, **stop** and wait for a human continue; then re-check the real status. Code-caused CI failure returns to Development.
+8. **Pipeline monitoring** — open a PR and leave it **unmerged** by default. Invoking the cycle licenses specialist commits. Merge only if the user asked to merge and CI is really green. Wait on real CI until it is terminal. If you cannot wait, **stop** and wait for a human continue; then re-check the real status. Code-caused CI failure returns to Development.
 9. **Standards** — update living `CODING_STANDARDS.md` unless you pass `--no-standards`.
 
 Skip writing a *new* architecture plan with `--no-plan` plus a ticket or existing plan. That does **not** skip the grill.
@@ -28,6 +30,8 @@ Skip writing a *new* architecture plan with `--no-plan` plus a ticket or existin
 ## How to launch
 
 ### Grok Build
+
+When `/workflow retemper` is available, launch it and **stop**. Do not simulate the cycle in-chat with the retemper skill.
 
 JSON objects are what Grok’s `/workflow` docs show. You do **not** have to use them.
 
@@ -73,6 +77,8 @@ $retemper Add CSV export --no-standards
 /retemper Add CSV export --no-standards
 ```
 
+On Codex and Copilot (skill-path), the parent announces each phase and **stops**. A visible child verdict is required before the next phase.
+
 ### Shared flags
 
 | Intent | Flag | JSON |
@@ -85,7 +91,7 @@ $retemper Add CSV export --no-standards
 
 ## Waiting on a pipeline
 
-No harness should invent a green build. Open the PR and **wait on the real CI status** (blocking watch, or a 5-minute recheck) until it is terminal. Then merge or return to Development.
+No harness should invent a green build. Open the PR and leave it **unmerged** unless the user asked to merge. **Wait on the real CI status** (blocking watch, or a 5-minute recheck) until it is terminal. Merge only if the user asked to merge **and** CI is really green; otherwise leave the PR open or return to Development.
 
 If there is no pipeline, the wait fails or times out, or merge needs a human, **stop**.
 
@@ -95,7 +101,7 @@ If there is no pipeline, the wait fails or times out, or merge needs a human, **
 /workflow resume retemper
 ```
 
-The script then re-checks the real status and merges or returns to Development.
+The script then re-checks the real status. It merges only if the user asked to merge and CI is really green; otherwise it leaves the PR unmerged or returns to Development.
 
 **Codex.** There is no `pause()` / `/workflow resume`. Continue / re-invoke `$retemper` (or `/skills`) after CI, then re-check the real status.
 

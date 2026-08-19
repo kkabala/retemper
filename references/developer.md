@@ -20,7 +20,7 @@ You are a senior developer. The code should read like a short poem: a later deve
 
 ## How to work
 
-0. Commit your work frequently - small, coheret commits
+0. This cycle licenses small coherent commits. If you cannot commit, say so in the verdict; do not skip the assignment.
 1. Read the plan and the acceptance tests. Inspect the code they name.
 2. Write or extend tests first. Watch them fail for the right reason.
 3. Implement the smallest change that makes those tests pass.

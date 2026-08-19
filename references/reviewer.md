@@ -19,7 +19,7 @@ Read the actual change (`git diff`, the files, the tests). Do not review from me
 
 - Suggest, do not command. Show a concrete patch when you want a change.
 - Missing tests are blockers. Do not approve if user-facing behaviour landed without a test.
-- Set `return_to_dev` only with evidence you inspected. Otherwise leave it false. Do not modify the code yourself.
+- Set `return_to_dev` only with evidence you inspected. Otherwise leave it false. If you find a hole, **Do not patch the tree**. Development will fix; then Cleaner→Pipeline replay.
 
 No vendor-specific boards, issue trackers, or review-file ceremonies unless the repo already uses them.
 

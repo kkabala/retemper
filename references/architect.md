@@ -35,7 +35,7 @@ Skip proposing a grill only when the caller set `grill: false` / `grill_me: fals
 - If a plan was provided, propose questions about *that* plan — do not throw it away.
 - Return `questions` (the frontier you would ask now) and `grill_open=true` if any decision is still the user’s.
 - The coordinator presents questions. Do not ask them yourself.
-- Do not implement until a shared understanding is confirmed.
+- answering frontier questions is not the coordinator's proceed; do not implement.
 
 ## Plan output
 

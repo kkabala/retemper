@@ -18,15 +18,26 @@ current phase’s reference from `references/` while you walk. Stay language-
 and stack-agnostic: use the project’s own tools and layout. Do not require
 Jira, NX, or a particular UI toolkit.
 
-When the harness can spawn a child, dispatch that phase’s specialist(s) at
-the phase’s compute band. Follow `references/orchestrator.md` for fan-out:
-one worker per ready, independent item; dependent items wait for the next
-wave. This file names which specialist that is. Otherwise run the role
-yourself. Tell leaf workers not to spawn.
+When spawn works, you **must** dispatch that phase’s specialist(s) at the
+phase’s compute band. Follow `references/orchestrator.md` for fan-out: one
+worker per ready, independent item; dependent items wait for the next wave.
+This file names which specialist that is. Tell leaf workers not to spawn.
+Self-run a specialist only when you cannot spawn. If you self-ran
+Development, you still cannot be Code review or Final QA Review.
+If spawn is down and this session implemented, stop with needs_user.
+You cannot be Code review or Final QA Review. A parent self-review is
+not a verdict.
 
-**Invocation:** `$retemper` (Codex), `/retemper` (GitHub Copilot), or pick
-**retemper** from `/skills`. Codex and Copilot have no Grok workflow runner —
-do not tell the user to launch or resume a `/workflow`.
+**Invocation:** If this session can run /workflow retemper (Grok Build,
+workflow installed): **launch that with the same task/flags and stop.** Do
+not simulate phases in chat. If this is Grok but the workflow is not
+available: say so; skill-path is the fallback. Codex / Copilot: skill-path
+(`$retemper`, `/retemper`, or `/skills` → retemper). Do not tell the user
+to launch or resume a `/workflow`.
+
+A new user message **while this run is open** is input to this run (fold
+it in). Do not declare a one-off. Do not start a second Planning. A new
+`$retemper` / `/retemper` after complete or stopped is a new run.
 
 ## Launch
 
@@ -60,6 +71,28 @@ Planning runs.
 
 Walk these titles in order. Do not rename them. Read the named reference for
 the phase you are in; do not load every reference up front.
+
+On skill-path, start each phase with:
+
+```
+**Phase:** <title>
+**Handoff:** STOP. Do not start the next phase in this turn.
+```
+
+When the phase finishes, the same turn may include only:
+
+```
+**Phase complete:** <title>
+**Verdict:** { … }
+**Next:** <next title>
+```
+
+Show the user the verdict object in the handoff. If the harness has scratch
+(`write_scratch_file` or equivalent), also write `verdict-<phase>-<cycle>.json`
+there. Do not add a repo `.retemper/` directory.
+
+A parent self-review is not a verdict. Missing or malformed child payload is
+unusable — fail closed.
 
 1. **Planning** — `references/architect.md` — compute band **deep**. Modular,
    domain-driven, hexagonal / plug-in. Do not implement. One architect.
@@ -96,6 +129,19 @@ the phase you are in; do not load every reference up front.
 If this repo has `CODING_STANDARDS.md` at the root, follow it in every phase.
 If it does not, continue.
 
+## Grill and proceed
+
+Dispatch the architect; synthesize questions; wait for answers; revise the
+plan without implementing; show the seven-section plan and work items;
+**Stop.** Answering grill questions is not proceed. Only after explicit
+proceed (`proceed`, `go`, “build it”, “ship it”) spawn Acceptance. If grill
+is off but Planning ran: still show the plan and wait for proceed. Legal
+Planning skip: go to Acceptance.
+
+After Planning (grill stays on the parent): you **must not implement**
+product code or feature tests in this conversation. Spawn Acceptance tests,
+then Development.
+
 ## Hardening loop
 
 Phases **Development** through **Pipeline monitoring** are the hardening
@@ -114,12 +160,20 @@ Fail closed: a missing or unusable verdict is a return to **Development**.
 A `return_to_dev: true` claim with empty evidence is **not** a return.
 
 On a real return: go back to **Development** and replay every later hardening
-phase in order with **no-skip replay**. Do not skip Cleaner, Testing, Code
-review, Final QA Review, or Pipeline monitoring. Do not re-run Planning or
-Acceptance tests.
+phase in order with **no-skip replay**. Do not re-run Planning or
+Acceptance tests. Gate agent must not patch the tree in that turn. Spawn a
+fresh child when spawn works. If spawn is down, stop with needs_user. Unrun
+judgment is not approval.
 
 Cap at **3** cycles. If a return would start a fourth Development, **max-cycles**
 stop. Do not run Standards after a max-cycles stop.
+
+## Commits
+
+This cycle licenses commits the specialist roles require. Pipeline
+opens the PR and leaves it unmerged unless the user asked to merge. If
+commit/PR is impossible, Pipeline sets needs_user and stops — not a skip of
+Pipeline.
 
 ## Waiting on CI
 

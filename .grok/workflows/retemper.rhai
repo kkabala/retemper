@@ -255,6 +255,44 @@ fn task_blob(bag) {
     text
 }
 
+fn take_summary(res) {
+    if res != () && res.success && is_map(res.output) { return trimmed(res.output.summary); }
+    ""
+}
+
+fn unusable_verdict(res, label) {
+    if res != () && is_map(res.output) {
+        return trimmed(res.output.reason) + " " + trimmed(res.output.evidence);
+    }
+    label + " returned no usable verdict"
+}
+
+fn own_item_prompt(base, one) {
+    let d_prompt = base;
+    d_prompt += " Own only work item " + json_encode(item_id(one)) + ": " + json_encode(trimmed(one.summary)) + ".";
+    if is_map(one) && trimmed(one.scope) != "" {
+        d_prompt += " Writable scope: " + json_encode(trimmed(one.scope)) + ".";
+    }
+    d_prompt
+}
+
+fn developer_job(prompt, cycle, suffix) {
+    #{
+        prompt: prompt,
+        label: "developer:" + cycle.to_string() + suffix,
+        capability_mode: "all",
+        output_schema: verdict_schema,
+    }
+}
+
+fn run_job(job) {
+    agent(job.prompt, #{
+        label: job.label,
+        capability_mode: job.capability_mode,
+        output_schema: job.output_schema,
+    })
+}
+
 let bag = normalize_args(args);
 let task = arg_text(bag, "task");
 if task == "" {
@@ -320,14 +358,16 @@ if skip_planning(bag) {
         if trimmed(plan_res.output.summary) != "" { plan_summary = trimmed(plan_res.output.summary); }
         if want_grill(bag) && plan_res.output.grill_open == true {
             let q = trimmed(plan_res.output.questions);
-            let msg = "Planning grill is open. Answer the frontier questions, then resume.";
+            let msg = "Planning grill is open. Present your questions as-is.";
             if q != "" { msg += " " + q; }
             await_user("user", msg);
         }
     } else if want_grill(bag) {
-        await_user("user", "Architect did not return a usable plan. Confirm or paste a plan, then resume.");
+        await_user("user", "Architect did not return a usable plan. Confirm or paste a plan.");
     }
     if plan_summary == "" { plan_summary = arg_text(bag, "task"); }
+    let proceed_msg = "Plan: " + plan_summary + ". Answering is not proceed. Say proceed to start Acceptance tests.";
+    await_user("user", proceed_msg);
 }
 
 let plan_json = json_encode(plan_summary);
@@ -412,90 +452,56 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
                 blocked = [];
             }
             log("Development wave " + wave.to_string() + ": " + ready.len().to_string() + " worker(s)");
+            let batch = [];
             if ready.len() == 1 {
                 let one = ready[0];
-                let d_prompt = d_base;
-                d_prompt += " Own only work item " + json_encode(item_id(one)) + ": " + json_encode(trimmed(one.summary)) + ".";
-                if is_map(one) && trimmed(one.scope) != "" {
-                    d_prompt += " Writable scope: " + json_encode(trimmed(one.scope)) + ".";
-                }
-                let dev_res = agent(d_prompt, #{
-                    label: "developer:" + cycle.to_string() + ":" + item_id(one),
-                    capability_mode: "all",
-                    output_schema: verdict_schema,
-                });
-                if dev_res != () && dev_res.success && is_map(dev_res.output) {
-                    if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
-                }
-                if item_id(one) != "" { done_ids.push(item_id(one)); }
+                batch.push(run_job(developer_job(own_item_prompt(d_base, one), cycle, ":" + item_id(one))));
             } else {
                 let jobs = [];
                 let ji = 0;
                 while ji < ready.len() {
                     let one = ready[ji];
-                    let d_prompt = d_base;
-                    d_prompt += " Own only work item " + json_encode(item_id(one)) + ": " + json_encode(trimmed(one.summary)) + ".";
-                    if is_map(one) && trimmed(one.scope) != "" {
-                        d_prompt += " Writable scope: " + json_encode(trimmed(one.scope)) + ".";
-                    }
-                    jobs.push(#{
-                        prompt: d_prompt,
-                        label: "developer:" + cycle.to_string() + ":" + item_id(one),
-                        capability_mode: "all",
-                        output_schema: verdict_schema,
-                    });
+                    jobs.push(developer_job(own_item_prompt(d_base, one), cycle, ":" + item_id(one)));
                     ji += 1;
                 }
-                let batch = parallel(jobs);
-                let bi = 0;
-                while bi < batch.len() {
-                    let dev_res = batch[bi];
-                    if dev_res != () && dev_res.success && is_map(dev_res.output) {
-                        if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
-                    }
-                    bi += 1;
-                }
-                let di = 0;
-                while di < ready.len() {
-                    if item_id(ready[di]) != "" { done_ids.push(item_id(ready[di])); }
-                    di += 1;
-                }
+                batch = parallel(jobs);
+            }
+            let bi = 0;
+            while bi < batch.len() {
+                let summary = take_summary(batch[bi]);
+                if summary != "" { last_reason = summary; }
+                bi += 1;
+            }
+            let di = 0;
+            while di < ready.len() {
+                if item_id(ready[di]) != "" { done_ids.push(item_id(ready[di])); }
+                di += 1;
             }
             remaining = blocked;
             wave += 1;
         }
     } else {
-        let d_prompt = d_base;
-        let dev_res = agent(d_prompt, #{
-            label: "developer:" + cycle.to_string(),
-            capability_mode: "all",
-            output_schema: verdict_schema,
-        });
-        if dev_res != () && dev_res.success && is_map(dev_res.output) {
-            if trimmed(dev_res.output.summary) != "" { last_reason = trimmed(dev_res.output.summary); }
-        }
+        let summary = take_summary(run_job(developer_job(d_base, cycle, "")));
+        if summary != "" { last_reason = summary; }
     }
 
-    if !bounce {
-        phase("Cleaner");
-        let c_prompt = role_prefix("cleaner.md");
-        c_prompt += compute_band("standard");
-        c_prompt += " You are the Cleaner. Same behaviour, cleaner design. ";
-        c_prompt += "Remove duplication, dead dependencies, smells. Run existing tests. ";
-        c_prompt += "If the feature is wrong — not merely messy — set return_to_dev=true with evidence. ";
-        c_prompt += "Otherwise refactor in place and set return_to_dev=false. ";
-        c_prompt += task_blob(bag);
-        let cl_res = agent(c_prompt, #{
-            label: "cleaner:" + cycle.to_string(),
-            capability_mode: "all",
-            output_schema: verdict_schema,
-        });
-        if should_return(cl_res) {
-            bounce = true;
-            bounce_from = "Cleaner";
-            if cl_res != () && is_map(cl_res.output) { last_reason = trimmed(cl_res.output.reason) + " " + trimmed(cl_res.output.evidence); }
-            else { last_reason = "Cleaner returned no usable verdict"; }
-        }
+    phase("Cleaner");
+    let c_prompt = role_prefix("cleaner.md");
+    c_prompt += compute_band("standard");
+    c_prompt += " You are the Cleaner. Same behaviour, cleaner design. ";
+    c_prompt += "Remove duplication, dead dependencies, smells. Run existing tests. ";
+    c_prompt += "If the feature is wrong — not merely messy — set return_to_dev=true with evidence. ";
+    c_prompt += "Otherwise refactor in place and set return_to_dev=false. ";
+    c_prompt += task_blob(bag);
+    let cl_res = agent(c_prompt, #{
+        label: "cleaner:" + cycle.to_string(),
+        capability_mode: "all",
+        output_schema: verdict_schema,
+    });
+    if should_return(cl_res) {
+        bounce = true;
+        bounce_from = "Cleaner";
+        last_reason = unusable_verdict(cl_res, "Cleaner");
     }
 
     if !bounce {
@@ -515,8 +521,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         if should_return(te_res) {
             bounce = true;
             bounce_from = "Testing";
-            if te_res != () && is_map(te_res.output) { last_reason = trimmed(te_res.output.reason) + " " + trimmed(te_res.output.evidence); }
-            else { last_reason = "Testing returned no usable verdict"; }
+            last_reason = unusable_verdict(te_res, "Testing");
         }
     }
 
@@ -536,8 +541,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         if should_return(rv_res) {
             bounce = true;
             bounce_from = "Code review";
-            if rv_res != () && is_map(rv_res.output) { last_reason = trimmed(rv_res.output.reason) + " " + trimmed(rv_res.output.evidence); }
-            else { last_reason = "Code review returned no usable verdict"; }
+            last_reason = unusable_verdict(rv_res, "Code review");
         }
     }
 
@@ -560,8 +564,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         if should_return(qa_res) {
             bounce = true;
             bounce_from = "Final QA Review";
-            if qa_res != () && is_map(qa_res.output) { last_reason = trimmed(qa_res.output.reason) + " " + trimmed(qa_res.output.evidence); }
-            else { last_reason = "Final QA returned no usable verdict"; }
+            last_reason = unusable_verdict(qa_res, "Final QA");
         }
     }
 
@@ -570,6 +573,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         let i_prompt = role_prefix("pipeline.md");
         i_prompt += compute_band("standard");
         i_prompt += " Final QA approved. Open a pull request (or this repo's equivalent). ";
+        i_prompt += "Leave the PR unmerged unless the user asked to merge. ";
         i_prompt += "If a pipeline exists, wait on its real status until it is terminal. ";
         i_prompt += "Prefer a blocking watch (gh run watch --exit-status or the host equivalent) with a long command timeout (at least 45 minutes). ";
         i_prompt += "If there is no watch, recheck every 5 minutes (sleep 300) until green or failed. ";
@@ -586,8 +590,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
         if should_return(pi_res) {
             bounce = true;
             bounce_from = "Pipeline monitoring";
-            if pi_res != () && is_map(pi_res.output) { last_reason = trimmed(pi_res.output.reason) + " " + trimmed(pi_res.output.evidence); }
-            else { last_reason = "Pipeline returned no usable verdict"; }
+            last_reason = unusable_verdict(pi_res, "Pipeline");
         } else if needs_human(pi_res) {
             await_user("user", "CI wait could not finish (no pipeline, watch failed or timed out, or merge needs a human). When CI is terminal, run /workflow resume retemper — or say that it failed.");
             let pi2 = agent(i_prompt + " The user resumed after a CI gate. Re-check status and merge only if green.", #{
@@ -598,8 +601,7 @@ while cycle <= MAX_CYCLES && !finished && !stopped {
             if should_return(pi2) {
                 bounce = true;
                 bounce_from = "Pipeline monitoring";
-                if pi2 != () && is_map(pi2.output) { last_reason = trimmed(pi2.output.reason) + " " + trimmed(pi2.output.evidence); }
-                else { last_reason = "Pipeline recheck returned no usable verdict"; }
+                last_reason = unusable_verdict(pi2, "Pipeline recheck");
             } else {
                 finished = true;
                 if was_merged(pi2) { last_reason = "merged after resume"; }
@@ -636,9 +638,8 @@ if finished && want_standards(bag) {
         capability_mode: "all",
         output_schema: verdict_schema,
     });
-    if st_res != () && st_res.success && is_map(st_res.output) && trimmed(st_res.output.summary) != "" {
-        last_reason = last_reason + " | standards: " + trimmed(st_res.output.summary);
-    }
+    let std_summary = take_summary(st_res);
+    if std_summary != "" { last_reason = last_reason + " | standards: " + std_summary; }
 } else if !want_standards(bag) {
     log("CODING_STANDARDS.md left untouched (--no-standards / update_standards=false)");
 } else {
