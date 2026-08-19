@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -9,6 +9,7 @@ import test from "node:test";
 import { PHASES } from "../lib/cycle.mjs";
 import {
   agentsHome,
+  codexHome,
   describe,
   formatInstalls,
   grokHome,
@@ -181,6 +182,8 @@ test("help names grok, codex, and copilot and does not say only grok is implemen
   assert.match(text, /installs\.txt/);
   assert.match(text, /RETEMPER_HOME/);
   assert.match(text, /--platform grok,codex|--platform grok --platform/);
+  assert.match(text, /skills\/productivity\/grill-me/);
+  assert.match(text, /skills\/productivity\/grilling/);
 });
 
 test("planInstall accepts codex and keeps grok destinations unchanged", () => {
@@ -201,6 +204,7 @@ test("planInstall accepts codex and keeps grok destinations unchanged", () => {
   ]);
   assert.equal(grokUser.skillDest, null);
   assert.equal(grokUser.targetRoot, home);
+  assert.deepEqual(grokUser.skillLinks, []);
 
   assert.equal(grokProject.platform, "grok");
   assert.ok(grokProject.workflowDest.endsWith(join(".grok", "workflows", "retemper.rhai")));
@@ -230,6 +234,17 @@ test("planInstall routes Codex user and project dests under .agents/skills", () 
   assert.ok(user.skillDest.includes(join(".agents", "skills")));
   assert.doesNotMatch(user.skillDest, /\.codex[/\\]prompts/);
   assert.equal(user.targetRoot, home);
+  const codexSkills = join(codexHome(), "skills");
+  assert.deepEqual(
+    user.skillLinks.map((link) => link.dest),
+    [
+      join(codexSkills, "retemper"),
+      join(codexSkills, "orchestrate"),
+      join(codexSkills, "grill-me"),
+      join(codexSkills, "grilling"),
+    ],
+  );
+  assert.equal(user.skillLinks[0].src, user.skillDest);
 
   assert.equal(project.platform, "codex");
   assert.equal(project.workflowDest, null);
@@ -238,6 +253,43 @@ test("planInstall routes Codex user and project dests under .agents/skills", () 
   assert.ok(project.skillDests[0].endsWith(join(".agents", "skills", "grill-me")));
   assert.ok(project.skillDests[1].endsWith(join(".agents", "skills", "grilling")));
   assert.ok(project.targetRoot.endsWith("retemper-codex-proj"));
+  assert.deepEqual(project.skillLinks, []);
+});
+
+test("grill fetch targets productivity skill folders, not the whole mattpocock catalog", () => {
+  const grokUser = planInstall({ platform: "grok", scope: "user" });
+  const grokProject = planInstall({
+    platform: "grok",
+    scope: "project",
+    target: "/does-not-exist/retemper-grok-proj",
+  });
+  const codexUser = planInstall({ platform: "codex", scope: "user" });
+  const copilotProject = planInstall({
+    platform: "copilot",
+    scope: "project",
+    target: "/does-not-exist/retemper-skill-proj",
+  });
+
+  for (const plan of [grokUser, grokProject, codexUser, copilotProject]) {
+    const sources = plan.fetchCommands.map((argv) => argv.find((token) => String(token).startsWith("mattpocock/")));
+    assert.deepEqual(sources, [
+      "mattpocock/skills/skills/productivity/grill-me",
+      "mattpocock/skills/skills/productivity/grilling",
+    ]);
+    for (const argv of plan.fetchCommands) {
+      assert.equal(argv.includes("mattpocock/skills"), false);
+    }
+  }
+
+  assert.equal(grokUser.fetchCommands[0].includes("--global"), true);
+  assert.equal(codexUser.fetchCommands[1].includes("--global"), true);
+  assert.equal(grokProject.fetchCommands[0].includes("--global"), false);
+  assert.equal(copilotProject.fetchCommands[1].includes("--global"), false);
+
+  const described = describe(grokUser, { dryRun: true, skipDeps: false });
+  assert.match(described, /skills\/productivity\/grill-me/);
+  assert.match(described, /skills\/productivity\/grilling/);
+  assert.doesNotMatch(described, /add mattpocock\/skills --skill/);
 });
 
 test("planInstall rejects unknown platforms", () => {
@@ -352,6 +404,7 @@ test("describe(codex|copilot) names .agents/skills and does not use a .rhai payl
     assert.match(text, /orchestrate:/);
     assert.match(text, /grill-me/);
     assert.match(text, /grilling/);
+    assert.match(text, /codex skill link:/);
     assert.doesNotMatch(text, /\.rhai/);
     assert.doesNotMatch(text, /\.github[/\\]skills/);
     assert.doesNotMatch(text, /\.copilot[/\\]skills/);
@@ -446,6 +499,17 @@ test("agentsHome honors AGENTS_HOME", () => {
   } finally {
     if (prev === undefined) delete process.env.AGENTS_HOME;
     else process.env.AGENTS_HOME = prev;
+  }
+});
+
+test("codexHome honors CODEX_HOME", () => {
+  const prev = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = "/tmp/retemper-codex-override";
+  try {
+    assert.equal(codexHome(), "/tmp/retemper-codex-override");
+  } finally {
+    if (prev === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = prev;
   }
 });
 
@@ -953,16 +1017,24 @@ test("CLI --platform grok claude rejects the unknown name and writes nothing", (
 test("CLI --platform grok,codex --scope user writes grok and skill dests under test homes", () => {
   const grok = mkdtempSync(join(tmpdir(), "retemper-user-grok-"));
   const agents = mkdtempSync(join(tmpdir(), "retemper-user-agents-"));
+  const codex = mkdtempSync(join(tmpdir(), "retemper-user-codex-"));
   withHome((home) => {
     try {
       const result = cli(["--platform", "grok", "codex", "--scope", "user", "--skip-deps"], {
         RETEMPER_HOME: home,
         GROK_HOME: grok,
         AGENTS_HOME: agents,
+        CODEX_HOME: codex,
       });
       assert.equal(result.status, 0, result.stderr);
       assert.equal(existsSync(join(grok, "workflows", "retemper.rhai")), true);
       assert.equal(existsSync(join(agents, "skills", "retemper", "SKILL.md")), true);
+      for (const name of ["retemper", "orchestrate", "grill-me", "grilling"]) {
+        const dest = join(codex, "skills", name);
+        assert.equal(lstatSync(dest).isSymbolicLink(), true, dest);
+        assert.equal(resolve(readlinkSync(dest)), resolve(join(agents, "skills", name)));
+        assert.equal(existsSync(join(dest, "SKILL.md")), true);
+      }
       assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
         `grok user ${grok}`,
         `codex user ${agents}`,
@@ -970,6 +1042,7 @@ test("CLI --platform grok,codex --scope user writes grok and skill dests under t
     } finally {
       rmSync(grok, { recursive: true, force: true });
       rmSync(agents, { recursive: true, force: true });
+      rmSync(codex, { recursive: true, force: true });
     }
   });
 });

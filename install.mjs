@@ -13,13 +13,25 @@
  *   node install.mjs --update
  *
  * Codex and GitHub Copilot install the same SKILL.md tree under .agents/skills
- * (official discovery root for both). There is no second copy under
- * .github/skills or ~/.copilot/skills.
+ * (project discovery root for both). Codex CLI user discovery is
+ * $CODEX_HOME/skills (default ~/.codex/skills); user-scope installs symlink
+ * there. There is no second copy under .github/skills or ~/.copilot/skills.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -29,19 +41,18 @@ export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot"];
 export const SKILL_PLATFORMS = ["codex", "copilot"];
 export const SUPPORTED_SCOPES = ["user", "project"];
 
-const GRILL_FETCH = [
-  "npx",
-  "--yes",
-  "skills@latest",
-  "add",
-  "mattpocock/skills",
-  "--skill",
-  "grill-me",
-  "--skill",
-  "grilling",
-  "-y",
-  "--copy",
+const GRILL_SKILLS = [
+  { name: "grill-me", source: "mattpocock/skills/skills/productivity/grill-me" },
+  { name: "grilling", source: "mattpocock/skills/skills/productivity/grilling" },
 ];
+
+function grillFetchCommands(scope) {
+  return GRILL_SKILLS.map(({ name, source }) => {
+    const args = ["npx", "--yes", "skills@latest", "add", source, "--skill", name, "-y", "--copy"];
+    if (scope === "user") args.push("--global");
+    return args;
+  });
+}
 
 function splitPlatformList(value) {
   return String(value)
@@ -128,6 +139,7 @@ export function helpText() {
     "                           Repeat the flag, commas, or spaces: grok,codex or grok codex",
     "                           grok → .rhai workflow under ~/.grok",
     "                           codex and copilot → same SKILL.md under .agents/skills",
+    "                           Codex CLI user also $CODEX_HOME/skills (symlink)",
     "  --scope user|project     grok user → ~/.grok/workflows   grok project → <repo>/.grok/workflows",
     "                           skill user → ~/.agents/skills   skill project → <repo>/.agents/skills",
     "  --target <dir>           Required for --scope project",
@@ -145,7 +157,9 @@ export function helpText() {
     "Dependencies:",
     "  grill-me  (mattpocock/skills) — front door; body is “run a grilling session”",
     "  grilling  (mattpocock/skills) — the interview primitive grill-me requires",
-    `  Fetch: ${GRILL_FETCH.join(" ")} [--global for user scope]`,
+    `  Fetch: ${GRILL_SKILLS.map(({ source }) => `npx --yes skills@latest add ${source}`).join(" ; ")}`,
+    "          [--global for user scope]. Each skill is added from its folder so sibling",
+    "          SKILL.md files with unquoted descriptions are never parsed.",
     "  Offline fallback: vendor/grill-me and vendor/grilling shipped in this package.",
   ].join("\n");
 }
@@ -156,6 +170,10 @@ export function grokHome() {
 
 export function agentsHome() {
   return process.env.AGENTS_HOME ? resolve(process.env.AGENTS_HOME) : join(homedir(), ".agents");
+}
+
+export function codexHome() {
+  return process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex");
 }
 
 export function retemperHome() {
@@ -274,9 +292,20 @@ function sharedSources() {
   };
 }
 
+function skillLinksFor(plan) {
+  if (!SKILL_PLATFORMS.includes(plan.platform) || plan.scope !== "user") return [];
+  const root = join(codexHome(), "skills");
+  const srcs = [];
+  if (plan.skillDest) srcs.push(plan.skillDest);
+  if (plan.orchestrateDest) srcs.push(plan.orchestrateDest);
+  srcs.push(...plan.skillDests);
+  return srcs.map((src) => ({ src, dest: join(root, basename(src)) }));
+}
+
 function withOrchestrate(plan, dest, sources) {
   plan.orchestrateSrc = sources.orchestrateSrc;
   plan.orchestrateDest = dest;
+  plan.skillLinks = skillLinksFor(plan);
   return plan;
 }
 
@@ -302,7 +331,7 @@ function planGrok(opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchArgs: [...GRILL_FETCH, "--global"],
+        fetchCommands: grillFetchCommands("user"),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -328,7 +357,7 @@ function planGrok(opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchArgs: [...GRILL_FETCH],
+      fetchCommands: grillFetchCommands("project"),
     },
     join(target, ".grok", "skills", "orchestrate"),
     sources,
@@ -358,7 +387,7 @@ function planSkillPlatform(platform, opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchArgs: [...GRILL_FETCH, "--global"],
+        fetchCommands: grillFetchCommands("user"),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -385,7 +414,7 @@ function planSkillPlatform(platform, opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchArgs: [...GRILL_FETCH],
+      fetchCommands: grillFetchCommands("project"),
     },
     join(target, ".agents", "skills", "orchestrate"),
     sources,
@@ -436,9 +465,14 @@ export function describe(plan, opts) {
     lines.push(`orchestrate: ${plan.orchestrateSrc} → ${plan.orchestrateDest}`);
   }
   lines.push(`references: ${plan.refsSrc} → ${plan.refsDest}`);
-  lines.push(`grill-me dependency step: ${plan.fetchArgs.join(" ")}`);
+  for (const argv of plan.fetchCommands) {
+    lines.push(`grill dependency step: ${argv.join(" ")}`);
+  }
   lines.push(`grill-me vendor fallback: ${plan.vendorSkills[0]} → ${plan.skillDests[0]}`);
   lines.push(`grilling vendor fallback: ${plan.vendorSkills[1]} → ${plan.skillDests[1]}`);
+  for (const link of plan.skillLinks) {
+    lines.push(`codex skill link: ${link.src} → ${link.dest}`);
+  }
   if (plan.standardsDest) {
     lines.push(`CODING_STANDARDS.md: ${plan.standardsSrc} → ${plan.standardsDest} (if missing)`);
   }
@@ -454,6 +488,23 @@ export function describe(plan, opts) {
 function copyDir(src, dest) {
   mkdirSync(dest, { recursive: true });
   cpSync(src, dest, { recursive: true });
+}
+
+function replaceWithSymlink(src, dest) {
+  mkdirSync(dirname(dest), { recursive: true });
+  const absSrc = resolve(src);
+  try {
+    const st = lstatSync(dest);
+    if (st.isSymbolicLink() && resolve(dirname(dest), readlinkSync(dest)) === absSrc) return;
+    rmSync(dest, { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  try {
+    symlinkSync(absSrc, dest);
+  } catch {
+    copyDir(absSrc, dest);
+  }
 }
 
 export function apply(plan, opts) {
@@ -482,14 +533,19 @@ export function apply(plan, opts) {
     writeFileSync(plan.standardsDest, readFileSync(plan.standardsSrc));
   }
   if (!opts.skipDeps) {
-    const result = spawnSync(plan.fetchArgs[0], plan.fetchArgs.slice(1), {
-      stdio: "inherit",
-    });
-    if (result.status !== 0) {
+    let failed = false;
+    for (const argv of plan.fetchCommands) {
+      const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
+      if (result.status !== 0) failed = true;
+    }
+    if (failed) {
       console.error(
         "Upstream grill-me fetch failed; vendor copies are already in place. Re-run without --skip-deps when network works.",
       );
     }
+  }
+  for (const link of plan.skillLinks) {
+    replaceWithSymlink(link.src, link.dest);
   }
 }
 
