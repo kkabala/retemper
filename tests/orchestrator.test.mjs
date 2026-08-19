@@ -57,6 +57,11 @@ test("acceptance: shared orchestrator role exists and is not the retemper cycle"
   assert.match(body, /one worker per/i);
   assert.match(body, /parallel/i);
   assert.match(body, /wave/i);
+  assert.match(body, /must dispatch/i);
+  assert.match(body, /only when you cannot spawn/i);
+  assert.match(body, /Do not cancel required work because it is slow/);
+  assert.match(body, /not a verdict/);
+  assert.match(body, /produced the work under judgment/);
   assert.doesNotMatch(body, /\bdeveloper\b/i);
   assert.doesNotMatch(body, /\barchitect\b/i);
   assert.doesNotMatch(body, /Final QA Review/);
@@ -84,6 +89,10 @@ test("acceptance: thin orchestrate skill loads the role and is not the cycle", (
   assert.match(body, /Stay available/i);
   assert.match(body, /delegat/i);
   assert.match(body, /retemper/);
+  assert.match(body, /must dispatch/i);
+  assert.match(body, /Do not cancel required work because it is slow/);
+  assert.match(body, /\/workflow retemper/);
+  assert.match(body, /more work in this run/);
   assert.doesNotMatch(body, /no-skip replay/);
   assert.doesNotMatch(body, /--no-grill/);
   assert.doesNotMatch(body, /Final QA Review/);

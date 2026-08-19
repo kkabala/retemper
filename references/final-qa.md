@@ -20,6 +20,7 @@ Do not trust Development, Testing, or Code review summaries. Independently boot,
 
 ## Verdict
 
+- **If you implemented this work in this session, you cannot approve it.** Refuse; demand a different worker. Unrun checks are not approval.
 - Approve (`return_to_dev=false`) only when every acceptance test passes **and** you cannot break the work. Say what you actually ran.
 - If the project cannot be booted in this environment, say exactly what you could run and what you could not. Do not pretend you launched it. That is not approval.
 

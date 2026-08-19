@@ -38,8 +38,8 @@ function bounceOn(phaseName, atCycle = 1) {
 test("parseLaunch accepts a plain sentence and object fields", () => {
   assert.deepEqual(parseLaunch("Add CSV export").task, "Add CSV export");
   assert.equal(parseLaunch("Add CSV export").grill, true);
-  assert.equal(parseLaunch("Add CSV --no-grill --ticket P2-014").grill, false);
-  assert.equal(parseLaunch("Add CSV --no-grill --ticket P2-014").ticket, "P2-014");
+  assert.equal(parseLaunch("Add CSV export --no-grill --ticket P2-014").grill, false);
+  assert.equal(parseLaunch("Add CSV export --no-grill --ticket P2-014").ticket, "P2-014");
   assert.equal(parseLaunch({ task: "Add CSV", grill_me: false }).grill, false);
   assert.equal(parseLaunch({ task: "Add CSV", no_grill: true }).grill, false);
   assert.equal(parseLaunch({ task: "Add CSV" }).grill, true);
@@ -197,6 +197,7 @@ test("role references stay stack-agnostic and match the named sources", () => {
   assert.doesNotMatch(developer, /Jira/);
 
   assert.match(tester, /Missing tests are blockers/);
+  assert.match(tester, /This cycle licenses/);
   assert.match(reviewer, /Missing tests are blockers/);
   assert.match(finalQa, /acceptance tests/i);
   assert.match(finalQa, /skeptic/i);
@@ -210,9 +211,24 @@ test("role references stay stack-agnostic and match the named sources", () => {
   assert.match(pipeline, /gh run watch --exit-status/);
   assert.match(pipeline, /sleep 300/);
   assert.match(pipeline, /Do not set `needs_user` merely because/);
+  assert.match(pipeline, /leave it unmerged/);
+  assert.match(pipeline, /If you cannot commit or open a PR/);
   assert.doesNotMatch(pipeline, /\/workflow resume/);
   assert.doesNotMatch(pipeline, /\$retemper/);
   assert.doesNotMatch(pipeline, /Do not invent a wait by looping, sleeping/);
+
+  assert.match(reviewer, /Do not patch the tree/);
+  assert.match(finalQa, /If you implemented this work in this session, you cannot approve/);
+  assert.match(developer, /This cycle licenses/);
+  const qaAcceptance = readFileSync(join(refs, "qa-acceptance.md"), "utf8");
+  assert.match(qaAcceptance, /This cycle licenses/);
+  const cleaner = readFileSync(join(refs, "cleaner.md"), "utf8");
+  const cleanerDo = cleaner.indexOf("## Do");
+  const cleanerReturn = cleaner.indexOf("## Return to Development");
+  assert.ok(cleanerDo >= 0, "cleaner.md must have a Do section");
+  assert.ok(cleanerReturn > cleanerDo, "cleaner.md Return to Development must follow Do");
+  assert.match(cleaner.slice(cleanerDo, cleanerReturn), /This cycle licenses/);
+  assert.match(architect, /answering frontier questions is not/);
 });
 
 test("Grok workflow and the shared Codex/Copilot skill both wait on real CI before needs_user", () => {
@@ -253,4 +269,66 @@ test("workflow script declares the same phase titles and the no-skip loop", () =
   assert.doesNotMatch(source, /React Native/);
   assert.doesNotMatch(source, /npx nx/);
   assert.doesNotMatch(source, /Jira MCP/);
+});
+
+test("acceptance: retemper skill closes skip holes", () => {
+  const skill = readFileSync(skillPath, "utf8");
+
+  assert.match(skill, /Do not start the next phase in this turn/);
+  assert.match(skill, /show the user the verdict/i);
+  assert.match(skill, /If this session can run \/workflow retemper/);
+  assert.doesNotMatch(skill, /\/workflow resume retemper/);
+  assert.match(skill, /Answering grill questions is not proceed/);
+  assert.match(skill, /must not implement/);
+  assert.match(skill, /A parent self-review is not a verdict/);
+  assert.match(skill, /while this run is open/);
+  assert.match(skill, /needs_user/);
+  assert.match(skill, /If spawn is down, stop with needs_user/);
+  assert.match(skill, /If spawn is down and this session implemented/);
+  assert.match(skill, /you still cannot be Code review or Final QA Review/);
+  assert.match(skill, /not simulate phases in chat/);
+  assert.match(skill, /Do not start a second Planning/);
+  assert.match(skill, /wait for proceed/);
+  assert.match(skill, /fresh child when spawn works/);
+  assert.match(skill, /leaves it unmerged/);
+  assert.match(skill, /write_scratch_file/);
+  assert.match(skill, /verdict-<phase>-<cycle>/);
+  assert.match(skill, /this session implemented/);
+  assert.match(skill, /This cycle licenses/);
+  assert.match(skill, /Do not add a repo `\.retemper\//);
+});
+
+test("acceptance: Grok workflow closes skip holes", () => {
+  const source = readFileSync(rhaiPath, "utf8");
+  const planningStart = source.indexOf('phase("Planning")');
+  const acceptanceStart = source.indexOf('phase("Acceptance tests")');
+  assert.ok(planningStart >= 0, "Planning phase must exist");
+  assert.ok(acceptanceStart > planningStart, "Acceptance tests must follow Planning");
+  const planningRegion = source.slice(planningStart, acceptanceStart);
+
+  assert.match(planningRegion, /plan_summary/);
+  assert.match(planningRegion, /Plan:/);
+  assert.match(planningRegion, /proceed/i);
+  assert.match(planningRegion, /Planning grill is open/);
+  assert.match(planningRegion, /Say proceed to start Acceptance tests/);
+  assert.match(source, /Say proceed to start Acceptance tests/);
+  assert.match(source, /answering is not proceed/i);
+  assert.match(source, /Leave the PR unmerged/);
+  for (const helper of [
+    "take_summary",
+    "unusable_verdict",
+    "own_item_prompt",
+    "developer_job",
+    "run_job",
+  ]) {
+    assert.match(source, new RegExp(`fn ${helper}\\(`));
+  }
+  assert.ok(
+    planningRegion.split("await_user").length - 1 >= 2,
+    "grilling Planning must await questions then proceed",
+  );
+  assert.ok(
+    source.split("await_user").length - 1 >= 3,
+    "Planning proceed pauses plus CI await_user",
+  );
 });

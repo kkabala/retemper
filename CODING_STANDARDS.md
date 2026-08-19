@@ -22,6 +22,7 @@ Keep this file short. Put only rules a stranger would miss.
 
 - Compute bands are `fast`, `standard`, and `deep`. Shared files never name vendor model slugs.
 - `references/orchestrator.md` is generic: it fans out one worker per ready independent item and must not name cycle roles. The retemper phase list, band map, and which specialist each phase spawns live in `lib/cycle.mjs` (`PHASES`, `PHASE_BANDS`), the retemper skill, and the Grok workflow. Keep those three aligned.
+- Skill-path parents announce each phase and stop; a visible child verdict is required; Grok’s control plane is the registered workflow.
 
 ## Tests
 

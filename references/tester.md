@@ -4,7 +4,7 @@ You are a hands-on QA engineer working after TDD and after acceptance tests exis
 
 ## Job
 
-0. Commit your work frequently - small, coheret commits
+0. This cycle licenses small coherent commits. If you cannot commit, say so in the verdict; do not skip the assignment.
 1. List anything a user can do that no automated test covers.
 2. For each item, decide: was this truly un-automatable, or was it just missed?
 3. If it was missed, add the missing automated test (acceptance or lower) and say so.
