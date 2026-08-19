@@ -17,7 +17,7 @@ Keep this file short. Put only rules a stranger would miss.
 - Destinations this machine has already installed into live in `~/.retemper/installs.txt` (or `$RETEMPER_HOME/installs.txt`), not in the clone.
 - Role files live once in `references/`. The installer copies that tree into each platform dest. Do not fork platform-specific copies in source.
 - Thin skills live under `.agents/skills/<name>/SKILL.md`. Extra skills (`orchestrate`, grill-me) are first-class dests — do not stuff them into the `vendorSkills` / `skillDests` parallel arrays used for grill vendor copies.
-- Grill upstream fetch is one `npx skills add` per skill folder (`mattpocock/skills/skills/productivity/grill-me` and `…/grilling`). Do not add the whole `mattpocock/skills` repo: the CLI parses every `SKILL.md` and skips siblings whose unquoted `description:` contains `: `.
+- Grill upstream fetch is one `npx skills add` per skill folder (`mattpocock/skills/skills/productivity/grill-me` and `…/grilling`). Pin `--agent grok` or `--agent cline` to the dest this installer writes. Do not omit `--agent` on `--global`: unbounded `-y` discovery includes PromptScript, which has no global dest. Do not add the whole `mattpocock/skills` repo: the CLI parses every `SKILL.md` and skips siblings whose unquoted `description:` contains `: `.
 - `--platform` is a list: commas, spaces after one flag, or a repeated flag. Names stay unique in the given order. An unknown name fails before any dest is written.
 
 ## Orchestration

@@ -46,9 +46,25 @@ const GRILL_SKILLS = [
   { name: "grilling", source: "mattpocock/skills/skills/productivity/grilling" },
 ];
 
-function grillFetchCommands(scope) {
+function grillFetchAgent(platform) {
+  return platform === "grok" ? "grok" : "cline";
+}
+
+function grillFetchCommands(scope, platform) {
   return GRILL_SKILLS.map(({ name, source }) => {
-    const args = ["npx", "--yes", "skills@latest", "add", source, "--skill", name, "-y", "--copy"];
+    const args = [
+      "npx",
+      "--yes",
+      "skills@latest",
+      "add",
+      source,
+      "--skill",
+      name,
+      "-y",
+      "--copy",
+      "--agent",
+      grillFetchAgent(platform),
+    ];
     if (scope === "user") args.push("--global");
     return args;
   });
@@ -158,8 +174,11 @@ export function helpText() {
     "  grill-me  (mattpocock/skills) — front door; body is “run a grilling session”",
     "  grilling  (mattpocock/skills) — the interview primitive grill-me requires",
     `  Fetch: ${GRILL_SKILLS.map(({ source }) => `npx --yes skills@latest add ${source}`).join(" ; ")}`,
-    "          [--global for user scope]. Each skill is added from its folder so sibling",
-    "          SKILL.md files with unquoted descriptions are never parsed.",
+    "          [--global for user scope] [--agent grok | cline]. Pin --agent to the dest",
+    "          this installer writes (grok → ~/.grok/skills, skill platforms → ~/.agents/skills",
+    "          via cline). Unbounded -y discovery also hits PromptScript, which has no global dest.",
+    "          Each skill is added from its folder so sibling SKILL.md files with unquoted",
+    "          descriptions are never parsed.",
     "  Offline fallback: vendor/grill-me and vendor/grilling shipped in this package.",
   ].join("\n");
 }
@@ -331,7 +350,7 @@ function planGrok(opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchCommands: grillFetchCommands("user"),
+        fetchCommands: grillFetchCommands("user", "grok"),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -357,7 +376,7 @@ function planGrok(opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchCommands: grillFetchCommands("project"),
+      fetchCommands: grillFetchCommands("project", "grok"),
     },
     join(target, ".grok", "skills", "orchestrate"),
     sources,
@@ -387,7 +406,7 @@ function planSkillPlatform(platform, opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchCommands: grillFetchCommands("user"),
+        fetchCommands: grillFetchCommands("user", platform),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -414,7 +433,7 @@ function planSkillPlatform(platform, opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchCommands: grillFetchCommands("project"),
+      fetchCommands: grillFetchCommands("project", platform),
     },
     join(target, ".agents", "skills", "orchestrate"),
     sources,
