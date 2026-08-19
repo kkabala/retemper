@@ -184,6 +184,7 @@ test("help names grok, codex, and copilot and does not say only grok is implemen
   assert.match(text, /--platform grok,codex|--platform grok --platform/);
   assert.match(text, /skills\/productivity\/grill-me/);
   assert.match(text, /skills\/productivity\/grilling/);
+  assert.doesNotMatch(text, /PromptScript/);
 });
 
 test("planInstall accepts codex and keeps grok destinations unchanged", () => {
@@ -290,6 +291,42 @@ test("grill fetch targets productivity skill folders, not the whole mattpocock c
   assert.match(described, /skills\/productivity\/grill-me/);
   assert.match(described, /skills\/productivity\/grilling/);
   assert.doesNotMatch(described, /add mattpocock\/skills --skill/);
+});
+
+function fetchAgent(argv) {
+  const index = argv.indexOf("--agent");
+  assert.ok(index >= 0, `expected --agent in ${argv.join(" ")}`);
+  return argv[index + 1];
+}
+
+test("grill fetch --agent follows the selected platform dest", () => {
+  const grokUser = planInstall({ platform: "grok", scope: "user" });
+  const grokProject = planInstall({
+    platform: "grok",
+    scope: "project",
+    target: "/does-not-exist/retemper-grok-proj",
+  });
+  const codexUser = planInstall({ platform: "codex", scope: "user" });
+  const copilotUser = planInstall({ platform: "copilot", scope: "user" });
+  const copilotProject = planInstall({
+    platform: "copilot",
+    scope: "project",
+    target: "/does-not-exist/retemper-skill-proj",
+  });
+
+  for (const argv of [...grokUser.fetchCommands, ...grokProject.fetchCommands]) {
+    assert.equal(fetchAgent(argv), "grok");
+  }
+  for (const argv of [
+    ...codexUser.fetchCommands,
+    ...copilotUser.fetchCommands,
+    ...copilotProject.fetchCommands,
+  ]) {
+    assert.equal(fetchAgent(argv), "cline");
+  }
+
+  assert.match(describe(grokUser, { dryRun: true, skipDeps: false }), /--agent grok/);
+  assert.match(describe(codexUser, { dryRun: true, skipDeps: false }), /--agent cline/);
 });
 
 test("planInstall rejects unknown platforms", () => {

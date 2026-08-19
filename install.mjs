@@ -46,9 +46,27 @@ const GRILL_SKILLS = [
   { name: "grilling", source: "mattpocock/skills/skills/productivity/grilling" },
 ];
 
-function grillFetchCommands(scope) {
+const GRILL_FETCH_AGENT = {
+  grok: "grok",
+  codex: "cline",
+  copilot: "cline",
+};
+
+function grillFetchCommands(scope, platform) {
   return GRILL_SKILLS.map(({ name, source }) => {
-    const args = ["npx", "--yes", "skills@latest", "add", source, "--skill", name, "-y", "--copy"];
+    const args = [
+      "npx",
+      "--yes",
+      "skills@latest",
+      "add",
+      source,
+      "--skill",
+      name,
+      "-y",
+      "--copy",
+      "--agent",
+      GRILL_FETCH_AGENT[platform],
+    ];
     if (scope === "user") args.push("--global");
     return args;
   });
@@ -311,11 +329,12 @@ function withOrchestrate(plan, dest, sources) {
 
 function planGrok(opts, sources) {
   const workflowSrc = join(here, ".grok", "workflows", `${NAME}.rhai`);
+  const platform = opts.platform;
   if (opts.scope === "user") {
     const home = grokHome();
     return withOrchestrate(
       {
-        platform: "grok",
+        platform,
         scope: "user",
         targetRoot: home,
         workflowSrc,
@@ -331,7 +350,7 @@ function planGrok(opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchCommands: grillFetchCommands("user"),
+        fetchCommands: grillFetchCommands("user", platform),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -341,7 +360,7 @@ function planGrok(opts, sources) {
   const target = resolve(opts.target || process.cwd());
   return withOrchestrate(
     {
-      platform: "grok",
+      platform,
       scope: "project",
       targetRoot: target,
       workflowSrc,
@@ -357,7 +376,7 @@ function planGrok(opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchCommands: grillFetchCommands("project"),
+      fetchCommands: grillFetchCommands("project", platform),
     },
     join(target, ".grok", "skills", "orchestrate"),
     sources,
@@ -387,7 +406,7 @@ function planSkillPlatform(platform, opts, sources) {
         vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
         standardsSrc: sources.standardsSrc,
         standardsDest: null,
-        fetchCommands: grillFetchCommands("user"),
+        fetchCommands: grillFetchCommands("user", platform),
       },
       join(home, "skills", "orchestrate"),
       sources,
@@ -414,7 +433,7 @@ function planSkillPlatform(platform, opts, sources) {
       vendorSkills: [sources.vendorGrillMe, sources.vendorGrilling],
       standardsSrc: sources.standardsSrc,
       standardsDest: opts.standards ? join(target, "CODING_STANDARDS.md") : null,
-      fetchCommands: grillFetchCommands("project"),
+      fetchCommands: grillFetchCommands("project", platform),
     },
     join(target, ".agents", "skills", "orchestrate"),
     sources,
