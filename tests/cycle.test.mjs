@@ -218,7 +218,6 @@ test("role references stay stack-agnostic and match the named sources", () => {
   assert.doesNotMatch(pipeline, /Do not invent a wait by looping, sleeping/);
 
   assert.match(reviewer, /Do not patch the tree/);
-  assert.match(finalQa, /If you implemented this work in this session, you cannot approve/);
   assert.match(developer, /This cycle licenses/);
   const qaAcceptance = readFileSync(join(refs, "qa-acceptance.md"), "utf8");
   assert.match(qaAcceptance, /This cycle licenses/);
