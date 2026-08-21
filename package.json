@@ -6,17 +6,17 @@
   "type": "module",
   "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build, Codex, and GitHub Copilot.",
   "bin": {
-    "retemper-install": "./install.mjs"
+    "retemper-install": "./install.ts"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
-    "install:user": "node install.mjs --platform grok --scope user",
-    "install:user:dry": "node install.mjs --dry-run --platform grok --scope user",
-    "install:user:codex": "node install.mjs --platform codex --scope user",
-    "install:user:codex:dry": "node install.mjs --dry-run --platform codex --scope user",
-    "install:user:copilot": "node install.mjs --platform copilot --scope user",
-    "install:user:copilot:dry": "node install.mjs --dry-run --platform copilot --scope user",
-    "update": "node install.mjs --update",
-    "update:dry": "node install.mjs --update --dry-run"
+    "test": "node --test tests/*.test.ts",
+    "install:user": "node install.ts --platform grok --scope user",
+    "install:user:dry": "node install.ts --dry-run --platform grok --scope user",
+    "install:user:codex": "node install.ts --platform codex --scope user",
+    "install:user:codex:dry": "node install.ts --dry-run --platform codex --scope user",
+    "install:user:copilot": "node install.ts --platform copilot --scope user",
+    "install:user:copilot:dry": "node install.ts --dry-run --platform copilot --scope user",
+    "update": "node install.ts --update",
+    "update:dry": "node install.ts --update --dry-run"
   }
 }

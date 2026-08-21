@@ -22,6 +22,8 @@ export const PHASES = Object.freeze([
   "Standards",
 ]);
 
+export type Phase = (typeof PHASES)[number];
+
 /** Compute bands for each cycle phase. Not vendor model ids. */
 export const PHASE_BANDS = Object.freeze({
   Planning: "deep",
@@ -54,19 +56,64 @@ export const RETURN_GATES = Object.freeze([
 
 export const DEFAULT_MAX_CYCLES = 3;
 
-function text(value) {
+export type LaunchBag = {
+  task: string;
+  plan: string;
+  ticket: string;
+  focus: string;
+  no_plan: boolean;
+  grill: boolean;
+  update_standards: boolean;
+};
+
+export type LaunchObject = {
+  task?: unknown;
+  plan?: unknown;
+  ticket?: unknown;
+  focus?: unknown;
+  no_plan?: unknown;
+  grill?: unknown;
+  grill_me?: unknown;
+  no_grill?: unknown;
+  no_grill_me?: unknown;
+  update_standards?: unknown;
+  living_standards?: unknown;
+  no_standards?: unknown;
+};
+
+export type LaunchInput = string | LaunchObject | null | undefined;
+
+export type CycleVerdict = {
+  return_to_dev?: unknown;
+  evidence?: unknown;
+  merged?: unknown;
+} | null;
+
+export type CycleStatus = "blocked" | "stopped" | "complete";
+
+export type CycleResult = {
+  walk: string[];
+  status: CycleStatus;
+  reason: string;
+  cycles: number;
+  launch: LaunchBag;
+};
+
+export type Decide = (phase: string, cycle: number) => CycleVerdict | unknown;
+
+function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function isFalse(value) {
+function isFalse(value: unknown): boolean {
   return value === false || value === "false";
 }
 
-function isTrue(value) {
+function isTrue(value: unknown): boolean {
   return value === true || value === "true";
 }
 
-function emptyLaunch() {
+function emptyLaunch(): LaunchBag {
   return {
     task: "",
     plan: "",
@@ -78,13 +125,13 @@ function emptyLaunch() {
   };
 }
 
-function applyGrillFlags(out, raw) {
+function applyGrillFlags(out: LaunchBag, raw: LaunchObject): void {
   if (isFalse(raw.grill) || isFalse(raw.grill_me) || isTrue(raw.no_grill) || isTrue(raw.no_grill_me)) {
     out.grill = false;
   }
 }
 
-function applyStandardsFlags(out, raw) {
+function applyStandardsFlags(out: LaunchBag, raw: LaunchObject): void {
   if (
     isFalse(raw.update_standards) ||
     isFalse(raw.living_standards) ||
@@ -100,7 +147,7 @@ function applyStandardsFlags(out, raw) {
  *   - a plain string task, optionally with --no-grill / --no-plan / --no-standards / --ticket X
  *   - a JSON object { task, ticket, plan, no_plan, grill, grill_me, update_standards }
  */
-export function parseLaunch(raw) {
+export function parseLaunch(raw: LaunchInput): LaunchBag {
   const out = emptyLaunch();
   if (raw == null || raw === "") {
     return out;
@@ -121,10 +168,10 @@ export function parseLaunch(raw) {
   return out;
 }
 
-export function parseCommandLine(line) {
+export function parseCommandLine(line: string): LaunchBag {
   const out = emptyLaunch();
   const tokens = text(line).split(/\s+/).filter(Boolean);
-  const taskParts = [];
+  const taskParts: string[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
     if (token === "--no-grill" || token === "--no-grill-me") {
@@ -149,19 +196,19 @@ export function parseCommandLine(line) {
   return out;
 }
 
-function hasBrief(bag) {
+function hasBrief(bag: LaunchBag): boolean {
   return bag.plan !== "" || bag.ticket !== "";
 }
 
-export function hasExistingBrief(args) {
+export function hasExistingBrief(args: LaunchInput): boolean {
   return hasBrief(parseLaunch(args));
 }
 
-export function shouldGrill(args) {
+export function shouldGrill(args: LaunchInput): boolean {
   return parseLaunch(args).grill === true;
 }
 
-export function shouldUpdateStandards(args) {
+export function shouldUpdateStandards(args: LaunchInput): boolean {
   return parseLaunch(args).update_standards === true;
 }
 
@@ -170,12 +217,12 @@ export function shouldUpdateStandards(args) {
  * plan (no_plan + a brief) AND turned grilling off. A provided plan still
  * gets grilled unless grill is explicitly false.
  */
-export function shouldSkipPlanning(args) {
+export function shouldSkipPlanning(args: LaunchInput): boolean {
   const bag = parseLaunch(args);
   return bag.no_plan === true && hasBrief(bag) && bag.grill === false;
 }
 
-export function planningGateError(args) {
+export function planningGateError(args: LaunchInput): string | null {
   const bag = parseLaunch(args);
   if (bag.no_plan === true && !hasBrief(bag)) {
     return "Pass a plan or ticket when no_plan is set (JSON no_plan, or --no-plan).";
@@ -190,17 +237,18 @@ export function planningGateError(args) {
  * Fail closed: a missing/unusable verdict is a return.
  * A return_to_dev claim without evidence is not a return.
  */
-export function shouldReturnToDevelopment(verdict) {
+export function shouldReturnToDevelopment(verdict: unknown): boolean {
   if (verdict == null || typeof verdict !== "object") {
     return true;
   }
-  if (verdict.return_to_dev !== true) {
+  const bag = verdict as CycleVerdict;
+  if (!bag || bag.return_to_dev !== true) {
     return false;
   }
-  return text(verdict.evidence) !== "";
+  return text(bag.evidence) !== "";
 }
 
-export function replayFromDevelopment(walk) {
+export function replayFromDevelopment(walk: string[]): string[] {
   return walk.concat(HARDENING_PHASES);
 }
 
@@ -210,12 +258,20 @@ export function replayFromDevelopment(walk) {
  * `decide(phase, cycle)` returns a verdict object. Tests call this with
  * real inputs; they must not reimplement the loop.
  */
-export function runCycle({ args, maxCycles = DEFAULT_MAX_CYCLES, decide }) {
+export function runCycle({
+  args,
+  maxCycles = DEFAULT_MAX_CYCLES,
+  decide,
+}: {
+  args: LaunchInput;
+  maxCycles?: number;
+  decide: Decide;
+}): CycleResult {
   if (typeof decide !== "function") {
     throw new TypeError("runCycle requires a decide(phase, cycle) function");
   }
 
-  const walk = [];
+  const walk: string[] = [];
   const bag = parseLaunch(args);
   const gate = planningGateError(args);
   if (gate) {
@@ -264,7 +320,7 @@ export function runCycle({ args, maxCycles = DEFAULT_MAX_CYCLES, decide }) {
 
       if (phase === "Pipeline monitoring") {
         completed = true;
-        if (verdict && verdict.merged === true) {
+        if (verdict && typeof verdict === "object" && (verdict as CycleVerdict)?.merged === true) {
           pipeReason = "merged";
         }
       }
@@ -298,7 +354,7 @@ export function runCycle({ args, maxCycles = DEFAULT_MAX_CYCLES, decide }) {
   };
 }
 
-export function walkHasNoSkipReplay(walk) {
+export function walkHasNoSkipReplay(walk: string[]): boolean {
   const firstDev = walk.indexOf("Development");
   if (firstDev < 0) {
     return false;
