@@ -2,15 +2,15 @@
 /**
  * Retemper installer — Grok Build workflows and a shared Agent Skill.
  *
- *   node install.mjs --help
- *   node install.mjs --dry-run --platform grok --scope user
- *   node install.mjs --platform grok --scope user
- *   node install.mjs --platform grok,codex --scope user
- *   node install.mjs --platform grok --platform copilot --scope user
- *   node install.mjs --platform grok --scope project --target /path/to/repo
- *   node install.mjs --dry-run --platform codex --scope user
- *   node install.mjs --platform copilot --scope project --target /path/to/repo
- *   node install.mjs --update
+ *   node install.ts --help
+ *   node install.ts --dry-run --platform grok --scope user
+ *   node install.ts --platform grok --scope user
+ *   node install.ts --platform grok,codex --scope user
+ *   node install.ts --platform grok --platform copilot --scope user
+ *   node install.ts --platform grok --scope project --target /path/to/repo
+ *   node install.ts --dry-run --platform codex --scope user
+ *   node install.ts --platform copilot --scope project --target /path/to/repo
+ *   node install.ts --update
  *
  * Codex and GitHub Copilot install the same SKILL.md tree under .agents/skills
  * (project discovery root for both). Codex CLI user discovery is
@@ -41,18 +41,78 @@ export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot"];
 export const SKILL_PLATFORMS = ["codex", "copilot"];
 export const SUPPORTED_SCOPES = ["user", "project"];
 
-const GRILL_SKILLS = [
+export type Platform = (typeof SUPPORTED_PLATFORMS)[number];
+export type Scope = (typeof SUPPORTED_SCOPES)[number];
+
+export type ParsedArgs = {
+  help: boolean;
+  dryRun: boolean;
+  skipDeps: boolean;
+  platforms: string[];
+  scope: string;
+  target: string;
+  standards: boolean;
+  update: boolean;
+};
+
+export type SkillLink = { src: string; dest: string };
+
+export type SharedSources = {
+  refsSrc: string;
+  orchestrateSrc: string;
+  vendorGrillMe: string;
+  vendorGrilling: string;
+  standardsSrc: string;
+};
+
+export type InstallPlan = {
+  platform: string;
+  scope: string;
+  targetRoot: string;
+  workflowSrc: string | null;
+  workflowDest: string | null;
+  skillSrc: string | null;
+  skillDest: string | null;
+  refsSrc: string;
+  refsDest: string;
+  skillDests: string[];
+  vendorSkills: string[];
+  standardsSrc: string;
+  standardsDest: string | null;
+  fetchCommands: string[][];
+  orchestrateSrc: string;
+  orchestrateDest: string;
+  skillLinks: SkillLink[];
+};
+
+export type ValidInstall = {
+  platform: string;
+  scope: string;
+  path: string;
+  invalid?: false;
+};
+
+export type InvalidInstall = {
+  invalid: true;
+  raw: string;
+};
+
+export type InstallEntry = ValidInstall | InvalidInstall;
+
+type GrillSkill = { name: string; source: string };
+
+const GRILL_SKILLS: GrillSkill[] = [
   { name: "grill-me", source: "mattpocock/skills/skills/productivity/grill-me" },
   { name: "grilling", source: "mattpocock/skills/skills/productivity/grilling" },
 ];
 
-const GRILL_FETCH_AGENT = {
+const GRILL_FETCH_AGENT: Record<string, string> = {
   grok: "grok",
   codex: "cline",
   copilot: "cline",
 };
 
-function grillFetchCommands(scope, platform) {
+function grillFetchCommands(scope: string, platform: string): string[][] {
   return GRILL_SKILLS.map(({ name, source }) => {
     const args = [
       "npx",
@@ -72,16 +132,16 @@ function grillFetchCommands(scope, platform) {
   });
 }
 
-function splitPlatformList(value) {
+function splitPlatformList(value: unknown): string[] {
   return String(value)
     .split(",")
     .map((name) => name.trim())
     .filter(Boolean);
 }
 
-function uniqueNames(names) {
-  const seen = new Set();
-  const out = [];
+function uniqueNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const name of names) {
     if (seen.has(name)) continue;
     seen.add(name);
@@ -90,8 +150,12 @@ function uniqueNames(names) {
   return out;
 }
 
-function takePlatforms(rest, index, token) {
-  const names = [];
+function takePlatforms(
+  rest: string[],
+  index: number,
+  token: string,
+): { names: string[]; index: number } {
+  const names: string[] = [];
   if (token.startsWith("--platform=")) {
     names.push(...splitPlatformList(token.slice("--platform=".length)));
     return { names, index };
@@ -104,8 +168,8 @@ function takePlatforms(rest, index, token) {
   return { names, index: i };
 }
 
-export function parseArgs(argv) {
-  const out = {
+export function parseArgs(argv: string[]): ParsedArgs {
+  const out: ParsedArgs = {
     help: false,
     dryRun: false,
     skipDeps: false,
@@ -135,7 +199,7 @@ export function parseArgs(argv) {
   return out;
 }
 
-export function helpText() {
+export function helpText(): string {
   return [
     "retemper installer",
     "",
@@ -144,13 +208,13 @@ export function helpText() {
     "Also installs the orchestrate skill (generic coordinator) next to grill-me.",
     "",
     "Usage:",
-    "  node install.mjs --platform grok --scope user [--dry-run] [--skip-deps]",
-    "  node install.mjs --platform grok,codex --scope user",
-    "  node install.mjs --platform grok --platform copilot --scope user",
-    "  node install.mjs --platform grok --scope project --target <repo> [--standards]",
-    "  node install.mjs --platform codex --scope user [--dry-run] [--skip-deps]",
-    "  node install.mjs --platform copilot --scope project --target <repo> [--standards]",
-    "  node install.mjs --update [--dry-run] [--skip-deps] [--standards]",
+    "  node install.ts --platform grok --scope user [--dry-run] [--skip-deps]",
+    "  node install.ts --platform grok,codex --scope user",
+    "  node install.ts --platform grok --platform copilot --scope user",
+    "  node install.ts --platform grok --scope project --target <repo> [--standards]",
+    "  node install.ts --platform codex --scope user [--dry-run] [--skip-deps]",
+    "  node install.ts --platform copilot --scope project --target <repo> [--standards]",
+    "  node install.ts --update [--dry-run] [--skip-deps] [--standards]",
     "",
     "Options:",
     "  --platform grok|codex|copilot[,...]",
@@ -182,28 +246,28 @@ export function helpText() {
   ].join("\n");
 }
 
-export function grokHome() {
+export function grokHome(): string {
   return process.env.GROK_HOME ? resolve(process.env.GROK_HOME) : join(homedir(), ".grok");
 }
 
-export function agentsHome() {
+export function agentsHome(): string {
   return process.env.AGENTS_HOME ? resolve(process.env.AGENTS_HOME) : join(homedir(), ".agents");
 }
 
-export function codexHome() {
+export function codexHome(): string {
   return process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex");
 }
 
-export function retemperHome() {
+export function retemperHome(): string {
   return process.env.RETEMPER_HOME ? resolve(process.env.RETEMPER_HOME) : join(homedir(), ".retemper");
 }
 
-export function installsPath() {
+export function installsPath(): string {
   return join(retemperHome(), "installs.txt");
 }
 
-export function parseInstalls(text) {
-  const records = [];
+export function parseInstalls(text: string): InstallEntry[] {
+  const records: InstallEntry[] = [];
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -213,7 +277,7 @@ export function parseInstalls(text) {
   return records;
 }
 
-function parseInstallLine(trimmed) {
+function parseInstallLine(trimmed: string): ValidInstall | null {
   const match = trimmed.match(/^(\S+)\s+(\S+)\s+(.+)$/);
   if (!match) return null;
   const platform = match[1];
@@ -225,7 +289,7 @@ function parseInstallLine(trimmed) {
   return { platform, scope, path: dest };
 }
 
-export function formatInstalls(entries) {
+export function formatInstalls(entries: InstallEntry[]): string {
   if (!entries.length) return "";
   return `${entries
     .map((entry) =>
@@ -234,18 +298,18 @@ export function formatInstalls(entries) {
     .join("\n")}\n`;
 }
 
-function sameDestination(left, right) {
+function sameDestination(left: ValidInstall, right: ValidInstall): boolean {
   if (left.platform !== right.platform || left.scope !== right.scope) return false;
   if (left.scope === "user") return true;
   return resolve(left.path) === resolve(right.path);
 }
 
-function asInstallRecord(record) {
+function asInstallRecord(record: ValidInstall): ValidInstall {
   return { platform: record.platform, scope: record.scope, path: record.path };
 }
 
-export function upsertInstalls(entries, record) {
-  const next = [];
+export function upsertInstalls(entries: InstallEntry[], record: ValidInstall): InstallEntry[] {
+  const next: InstallEntry[] = [];
   let replaced = false;
   for (const entry of entries) {
     if (!entry.invalid && sameDestination(entry, record)) {
@@ -263,7 +327,7 @@ export function upsertInstalls(entries, record) {
   return next;
 }
 
-export function recordFromPlan(plan) {
+export function recordFromPlan(plan: InstallPlan): ValidInstall {
   return asInstallRecord({
     platform: plan.platform,
     scope: plan.scope,
@@ -271,36 +335,36 @@ export function recordFromPlan(plan) {
   });
 }
 
-export function missingInstallsMessage(filePath = installsPath()) {
+export function missingInstallsMessage(filePath = installsPath()): string {
   return [
     `No install record found at ${filePath}.`,
     "Update cannot run until a normal install has been recorded.",
     "Run a normal install first, for example:",
-    "  node install.mjs --platform grok --scope user",
-    "  node install.mjs --platform grok --scope project --target <repo>",
-    "  node install.mjs --platform codex --scope user",
-    "  node install.mjs --platform codex --scope project --target <repo>",
+    "  node install.ts --platform grok --scope user",
+    "  node install.ts --platform grok --scope project --target <repo>",
+    "  node install.ts --platform codex --scope user",
+    "  node install.ts --platform codex --scope project --target <repo>",
   ].join("\n");
 }
 
-function writeInstalls(entries, filePath = installsPath()) {
+function writeInstalls(entries: InstallEntry[], filePath = installsPath()): void {
   mkdirSync(dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.tmp`;
   writeFileSync(tmp, formatInstalls(entries));
   renameSync(tmp, filePath);
 }
 
-function readInstallRecords(filePath = installsPath()) {
+function readInstallRecords(filePath = installsPath()): InstallEntry[] | null {
   if (!existsSync(filePath)) return null;
   return parseInstalls(readFileSync(filePath, "utf8"));
 }
 
-function recordInstall(plan) {
+function recordInstall(plan: InstallPlan): void {
   const filePath = installsPath();
   writeInstalls(upsertInstalls(readInstallRecords(filePath) || [], recordFromPlan(plan)), filePath);
 }
 
-function sharedSources() {
+function sharedSources(): SharedSources {
   return {
     refsSrc: join(here, "references"),
     orchestrateSrc: join(here, ".agents", "skills", "orchestrate"),
@@ -310,24 +374,28 @@ function sharedSources() {
   };
 }
 
-function skillLinksFor(plan) {
+function skillLinksFor(plan: InstallPlan): SkillLink[] {
   if (!SKILL_PLATFORMS.includes(plan.platform) || plan.scope !== "user") return [];
   const root = join(codexHome(), "skills");
-  const srcs = [];
+  const srcs: string[] = [];
   if (plan.skillDest) srcs.push(plan.skillDest);
   if (plan.orchestrateDest) srcs.push(plan.orchestrateDest);
   srcs.push(...plan.skillDests);
   return srcs.map((src) => ({ src, dest: join(root, basename(src)) }));
 }
 
-function withOrchestrate(plan, dest, sources) {
-  plan.orchestrateSrc = sources.orchestrateSrc;
-  plan.orchestrateDest = dest;
-  plan.skillLinks = skillLinksFor(plan);
-  return plan;
+function withOrchestrate(plan: Omit<InstallPlan, "orchestrateSrc" | "orchestrateDest" | "skillLinks">, dest: string, sources: SharedSources): InstallPlan {
+  const next: InstallPlan = {
+    ...plan,
+    orchestrateSrc: sources.orchestrateSrc,
+    orchestrateDest: dest,
+    skillLinks: [],
+  };
+  next.skillLinks = skillLinksFor(next);
+  return next;
 }
 
-function planGrok(opts, sources) {
+function planGrok(opts: ParsedArgs & { platform: string }, sources: SharedSources): InstallPlan {
   const workflowSrc = join(here, ".grok", "workflows", `${NAME}.rhai`);
   const platform = opts.platform;
   if (opts.scope === "user") {
@@ -383,7 +451,7 @@ function planGrok(opts, sources) {
   );
 }
 
-function planSkillPlatform(platform, opts, sources) {
+function planSkillPlatform(platform: string, opts: ParsedArgs, sources: SharedSources): InstallPlan {
   const skillSrc = join(here, ".agents", "skills", NAME);
   if (opts.scope === "user") {
     const home = agentsHome();
@@ -440,13 +508,13 @@ function planSkillPlatform(platform, opts, sources) {
   );
 }
 
-function unsupportedPlatformError(platform) {
+function unsupportedPlatformError(platform: string): Error {
   return new Error(
     `Unsupported platform "${platform || "(missing)"}". Pick platform=grok, platform=codex, or platform=copilot.`,
   );
 }
 
-function assertSupportedPlatforms(platforms) {
+function assertSupportedPlatforms(platforms: string[]): void {
   if (!platforms.length) {
     throw unsupportedPlatformError("");
   }
@@ -457,7 +525,7 @@ function assertSupportedPlatforms(platforms) {
   }
 }
 
-export function planInstall(opts) {
+export function planInstall(opts: { platform: string; scope: string; target?: string; standards?: boolean }): InstallPlan {
   if (!SUPPORTED_PLATFORMS.includes(opts.platform)) {
     throw unsupportedPlatformError(opts.platform);
   }
@@ -466,13 +534,23 @@ export function planInstall(opts) {
   }
 
   const sources = sharedSources();
+  const parsed: ParsedArgs = {
+    help: false,
+    dryRun: false,
+    skipDeps: false,
+    platforms: [opts.platform],
+    scope: opts.scope,
+    target: opts.target || "",
+    standards: Boolean(opts.standards),
+    update: false,
+  };
   if (SKILL_PLATFORMS.includes(opts.platform)) {
-    return planSkillPlatform(opts.platform, opts, sources);
+    return planSkillPlatform(opts.platform, parsed, sources);
   }
-  return planGrok(opts, sources);
+  return planGrok({ ...parsed, platform: opts.platform }, sources);
 }
 
-export function describe(plan, opts) {
+export function describe(plan: InstallPlan, opts: { skipDeps?: boolean; dryRun?: boolean }): string {
   const lines = [`platform=${plan.platform}`, `scope=${plan.scope}`];
   if (plan.workflowDest) {
     lines.push(`workflow: ${plan.workflowSrc} → ${plan.workflowDest}`);
@@ -504,12 +582,19 @@ export function describe(plan, opts) {
   return lines.join("\n");
 }
 
-function copyDir(src, dest) {
+function copyDir(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   cpSync(src, dest, { recursive: true });
 }
 
-function replaceWithSymlink(src, dest) {
+function nodeErrorCode(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "code" in error && typeof (error as { code: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  return undefined;
+}
+
+function replaceWithSymlink(src: string, dest: string): void {
   mkdirSync(dirname(dest), { recursive: true });
   const absSrc = resolve(src);
   try {
@@ -517,7 +602,7 @@ function replaceWithSymlink(src, dest) {
     if (st.isSymbolicLink() && resolve(dirname(dest), readlinkSync(dest)) === absSrc) return;
     rmSync(dest, { recursive: true, force: true });
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (nodeErrorCode(error) !== "ENOENT") throw error;
   }
   try {
     symlinkSync(absSrc, dest);
@@ -526,7 +611,7 @@ function replaceWithSymlink(src, dest) {
   }
 }
 
-export function apply(plan, opts) {
+export function apply(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
   if (plan.workflowSrc && plan.workflowDest) {
     mkdirSync(dirname(plan.workflowDest), { recursive: true });
     writeFileSync(plan.workflowDest, readFileSync(plan.workflowSrc));
@@ -568,11 +653,11 @@ export function apply(plan, opts) {
   }
 }
 
-function payloadPath(plan) {
+function payloadPath(plan: InstallPlan): string | null {
   return plan.skillSrc || plan.workflowSrc;
 }
 
-function applyPlan(plan, opts) {
+function applyPlan(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
   const payload = payloadPath(plan);
   if (!payload || !existsSync(payload)) {
     throw new Error(`Missing install payload: ${payload || "(none)"}`);
@@ -580,17 +665,27 @@ function applyPlan(plan, opts) {
   apply(plan, opts);
 }
 
-function isCli() {
+function invokedAsThisModule(moduleUrl: string): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   try {
-    return resolve(entry) === fileURLToPath(import.meta.url);
+    return resolve(entry) === fileURLToPath(moduleUrl);
   } catch {
     return false;
   }
 }
 
-function updateOne(entry, opts) {
+function isCli(): boolean {
+  return invokedAsThisModule(import.meta.url);
+}
+
+type UpdateOutcome = {
+  keep: boolean;
+  entry: InstallEntry;
+  failed: boolean;
+};
+
+function updateOne(entry: InstallEntry, opts: ParsedArgs): UpdateOutcome {
   if (entry.invalid) {
     console.error(`Skipping malformed install record: ${entry.raw}`);
     return { keep: true, entry, failed: false };
@@ -617,7 +712,7 @@ function updateOne(entry, opts) {
   }
 }
 
-function runUpdate(opts) {
+function runUpdate(opts: ParsedArgs): number {
   const filePath = installsPath();
   const entries = readInstallRecords(filePath);
   if (entries === null) {
@@ -628,7 +723,7 @@ function runUpdate(opts) {
     console.log("Nothing to update.");
     return 0;
   }
-  let kept = [];
+  let kept: InstallEntry[] = [];
   let failed = 0;
   for (const entry of entries) {
     const outcome = updateOne(entry, opts);
@@ -644,7 +739,7 @@ function runUpdate(opts) {
   return failed === 0 ? 0 : 1;
 }
 
-function installOne(platform, opts) {
+function installOne(platform: string, opts: ParsedArgs): void {
   const plan = planInstall({ ...opts, platform });
   console.log(describe(plan, opts));
   if (opts.dryRun) {
@@ -655,7 +750,7 @@ function installOne(platform, opts) {
   console.log(`installed ${NAME} (${plan.scope})`);
 }
 
-function runInstall(opts) {
+function runInstall(opts: ParsedArgs): number {
   assertSupportedPlatforms(opts.platforms);
   let failed = 0;
   for (const platform of opts.platforms) {
@@ -669,7 +764,7 @@ function runInstall(opts) {
   return failed === 0 ? 0 : 1;
 }
 
-export function main(argv = process.argv) {
+export function main(argv: string[] = process.argv): number {
   const opts = parseArgs(argv);
   if (opts.help || (!opts.update && !opts.platforms.length && !opts.scope)) {
     console.log(helpText());
@@ -681,7 +776,10 @@ export function main(argv = process.argv) {
   return runInstall(opts);
 }
 
-if (isCli()) {
+export function runCli(moduleUrl: string = import.meta.url): void {
+  if (!invokedAsThisModule(moduleUrl)) {
+    return;
+  }
   try {
     const code = main();
     if (typeof code === "number" && code !== 0) {
@@ -691,4 +789,8 @@ if (isCli()) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   }
+}
+
+if (isCli()) {
+  runCli();
 }

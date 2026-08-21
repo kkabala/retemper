@@ -8,22 +8,22 @@ Keep this file short. Put only rules a stranger would miss.
 
 ## Language and runtime
 
-- Node ESM (`"type": "module"`). Run tests with `npm test` (`node --test tests/*.test.mjs`).
+- Node ESM (`"type": "module"`), TypeScript sources. Run tests with `npm test` (`node --test tests/*.test.ts`).
 - No extra runtime dependencies; the installer stays on Node built-ins.
 
 ## Layout
 
-- `install.mjs` is the install/update CLI. `lib/cycle.mjs` is the cycle. Do not dump one-off helpers into `lib/` unless they are a second idea.
+- `install.ts` is the install/update CLI. `lib/cycle.ts` is the cycle. Do not dump one-off helpers into `lib/` unless they are a second idea.
 - Destinations this machine has already installed into live in `~/.retemper/installs.txt` (or `$RETEMPER_HOME/installs.txt`), not in the clone.
 - Role files live once in `references/`. The installer copies that tree into each platform dest. Do not fork platform-specific copies in source.
 - Thin skills live under `.agents/skills/<name>/SKILL.md`. Extra skills (`orchestrate`, grill-me) are first-class dests — do not stuff them into the `vendorSkills` / `skillDests` parallel arrays used for grill vendor copies.
-- Grill upstream fetch is one `npx skills add` per skill folder (`mattpocock/skills/skills/productivity/grill-me` and `…/grilling`). Pin `--agent` from the selected platform (`GRILL_FETCH_AGENT` in `install.mjs`). Do not add the whole `mattpocock/skills` repo: the CLI parses every `SKILL.md` and skips siblings whose unquoted `description:` contains `: `.
+- Grill upstream fetch is one `npx skills add` per skill folder (`mattpocock/skills/skills/productivity/grill-me` and `…/grilling`). Pin `--agent` from the selected platform (`GRILL_FETCH_AGENT` in `install.ts`). Do not add the whole `mattpocock/skills` repo: the CLI parses every `SKILL.md` and skips siblings whose unquoted `description:` contains `: `.
 - `--platform` is a list: commas, spaces after one flag, or a repeated flag. Names stay unique in the given order. An unknown name fails before any dest is written.
 
 ## Orchestration
 
 - Compute bands are `fast`, `standard`, and `deep`. Shared files never name vendor model slugs.
-- `references/orchestrator.md` is generic: it fans out one worker per ready independent item and must not name cycle roles. The retemper phase list, band map, and which specialist each phase spawns live in `lib/cycle.mjs` (`PHASES`, `PHASE_BANDS`), the retemper skill, and the Grok workflow. Keep those three aligned.
+- `references/orchestrator.md` is generic: it fans out one worker per ready independent item and must not name cycle roles. The retemper phase list, band map, and which specialist each phase spawns live in `lib/cycle.ts` (`PHASES`, `PHASE_BANDS`), the retemper skill, and the Grok workflow. Keep those three aligned.
 - Skill-path parents announce each phase and stop; a visible child verdict is required; Grok’s control plane is the registered workflow.
 
 ## Tests

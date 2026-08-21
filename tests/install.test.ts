@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { PHASES } from "../lib/cycle.mjs";
+import { PHASES } from "../lib/cycle.ts";
 import {
   agentsHome,
   codexHome,
@@ -24,21 +24,21 @@ import {
   SKILL_PLATFORMS,
   SUPPORTED_PLATFORMS,
   upsertInstalls,
-} from "../install.mjs";
+} from "../install.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const installPath = join(root, "install.mjs");
+const installPath = join(root, "install.ts");
 const skillSource = join(root, ".agents", "skills", "retemper", "SKILL.md");
 
-function cli(args, env = {}) {
+function cli(args: string[], env: NodeJS.ProcessEnv = {}) {
   return spawnSync(process.execPath, [installPath, ...args], {
-    encoding: "utf8",
+    encoding: "utf8" as const,
     cwd: root,
     env: { ...process.env, ...env },
   });
 }
 
-function withHome(fn) {
+function withHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "retemper-home-"));
   try {
     return fn(home);
@@ -50,7 +50,7 @@ function withHome(fn) {
 test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
   const grok = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "grok",
     "--scope",
@@ -64,7 +64,7 @@ test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
   ]);
   const codex = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "codex",
     "--scope",
@@ -92,7 +92,7 @@ test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
 
   const copilot = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "copilot",
     "--scope",
@@ -107,7 +107,7 @@ test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
 test("parseArgs collects multiple platforms from spaces, commas, repeats, and --platform=", () => {
   const spaced = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "grok",
     "codex",
@@ -119,7 +119,7 @@ test("parseArgs collects multiple platforms from spaces, commas, repeats, and --
 
   const commas = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "grok, copilot",
     "--scope",
@@ -129,7 +129,7 @@ test("parseArgs collects multiple platforms from spaces, commas, repeats, and --
 
   const repeats = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "grok",
     "--platform",
@@ -141,7 +141,7 @@ test("parseArgs collects multiple platforms from spaces, commas, repeats, and --
 
   const equals = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform=grok,codex",
     "--scope",
     "user",
@@ -150,7 +150,7 @@ test("parseArgs collects multiple platforms from spaces, commas, repeats, and --
 
   const mixed = parseArgs([
     "node",
-    "install.mjs",
+    "install.ts",
     "--platform",
     "grok",
     "--platform=codex,copilot",
@@ -160,7 +160,7 @@ test("parseArgs collects multiple platforms from spaces, commas, repeats, and --
   assert.deepEqual(mixed.platforms, ["grok", "codex", "copilot"]);
 
   assert.throws(
-    () => parseArgs(["node", "install.mjs", "--platform=grok", "codex"]),
+    () => parseArgs(["node", "install.ts", "--platform=grok", "codex"]),
     /Unknown argument: codex/,
   );
 });
@@ -293,7 +293,7 @@ test("grill fetch targets productivity skill folders, not the whole mattpocock c
   assert.doesNotMatch(described, /add mattpocock\/skills --skill/);
 });
 
-function fetchAgent(argv) {
+function fetchAgent(argv: string[]) {
   const index = argv.indexOf("--agent");
   assert.ok(index >= 0, `expected --agent in ${argv.join(" ")}`);
   return argv[index + 1];

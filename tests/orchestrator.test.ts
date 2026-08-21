@@ -6,26 +6,26 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { PHASE_BANDS, PHASES } from "../lib/cycle.mjs";
-import { planInstall } from "../install.mjs";
+import { PHASE_BANDS, PHASES } from "../lib/cycle.ts";
+import { planInstall } from "../install.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const installPath = join(root, "install.mjs");
+const installPath = join(root, "install.ts");
 const orchestratorPath = join(root, "references", "orchestrator.md");
 const architectPath = join(root, "references", "architect.md");
 const retemperSkillPath = join(root, ".agents", "skills", "retemper", "SKILL.md");
 const orchestrateSkillPath = join(root, ".agents", "skills", "orchestrate", "SKILL.md");
 const rhaiPath = join(root, ".grok", "workflows", "retemper.rhai");
 
-function cli(args, env = {}) {
+function cli(args: string[], env: NodeJS.ProcessEnv = {}) {
   return spawnSync(process.execPath, [installPath, ...args], {
-    encoding: "utf8",
+    encoding: "utf8" as const,
     cwd: root,
     env: { ...process.env, ...env },
   });
 }
 
-function withHome(fn) {
+function withHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "retemper-orch-home-"));
   try {
     return fn(home);
@@ -34,7 +34,7 @@ function withHome(fn) {
   }
 }
 
-function read(path) {
+function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 

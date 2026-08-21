@@ -15,18 +15,20 @@ import {
   shouldSkipPlanning,
   shouldUpdateStandards,
   walkHasNoSkipReplay,
-} from "../lib/cycle.mjs";
-import { planInstall } from "../install.mjs";
+  type CycleVerdict,
+  type Decide,
+} from "../lib/cycle.ts";
+import { planInstall } from "../install.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const rhaiPath = join(root, ".grok", "workflows", "retemper.rhai");
 const skillPath = join(root, ".agents", "skills", "retemper", "SKILL.md");
 
-function alwaysAdvance() {
+function alwaysAdvance(): CycleVerdict {
   return { return_to_dev: false, evidence: "ok" };
 }
 
-function bounceOn(phaseName, atCycle = 1) {
+function bounceOn(phaseName: string, atCycle = 1): Decide {
   return (phase, cycle) => {
     if (phase === phaseName && cycle === atCycle) {
       return { return_to_dev: true, evidence: `${phase} found a real gap` };
