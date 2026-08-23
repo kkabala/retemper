@@ -27,7 +27,9 @@ import {
   readlinkSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -594,9 +596,45 @@ function nodeErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
+function isMissingOrLoop(error: unknown): boolean {
+  const code = nodeErrorCode(error);
+  return code === "ENOENT" || code === "ELOOP";
+}
+
+function samePhysicalEntry(left: string, right: string): boolean {
+  try {
+    const leftStat = statSync(left);
+    const rightStat = statSync(right);
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch (error) {
+    if (isMissingOrLoop(error)) return false;
+    throw error;
+  }
+}
+
+function namesSameEntry(left: string, right: string): boolean {
+  if (resolve(left) === resolve(right)) return true;
+  if (basename(left) !== basename(right)) return false;
+  return samePhysicalEntry(dirname(left), dirname(right));
+}
+
+function repairLegacySelfLink(src: string, dest: string): void {
+  if (!namesSameEntry(src, dest)) return;
+  try {
+    if (!lstatSync(dest).isSymbolicLink()) return;
+    const target = resolve(dirname(dest), readlinkSync(dest));
+    if (!namesSameEntry(target, dest)) return;
+    unlinkSync(dest);
+  } catch (error) {
+    if (isMissingOrLoop(error)) return;
+    throw error;
+  }
+}
+
 function replaceWithSymlink(src: string, dest: string): void {
-  mkdirSync(dirname(dest), { recursive: true });
   const absSrc = resolve(src);
+  if (absSrc === resolve(dest) || samePhysicalEntry(absSrc, dest)) return;
+  mkdirSync(dirname(dest), { recursive: true });
   try {
     const st = lstatSync(dest);
     if (st.isSymbolicLink() && resolve(dirname(dest), readlinkSync(dest)) === absSrc) return;
@@ -612,6 +650,9 @@ function replaceWithSymlink(src: string, dest: string): void {
 }
 
 export function apply(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
+  for (const link of plan.skillLinks) {
+    repairLegacySelfLink(link.src, link.dest);
+  }
   if (plan.workflowSrc && plan.workflowDest) {
     mkdirSync(dirname(plan.workflowDest), { recursive: true });
     writeFileSync(plan.workflowDest, readFileSync(plan.workflowSrc));
