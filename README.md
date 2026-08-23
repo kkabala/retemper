@@ -51,18 +51,27 @@ node uninstall.ts --all --yes           # skip the y/N prompt (CI)
 
 Uninstall accepts the same `--platform` / `--scope` / `--target` grammar as the
 installer. With no filters it behaves as `--all`: every install recorded in
-`~/.retemper/installs.txt` (`$RETEMPER_HOME/installs.txt`) is removed and the
-matching records are dropped.
+`~/.retemper/installs.txt` (`$RETEMPER_HOME/installs.txt`) is selected and the
+matching records are dropped after its verified installer-owned entries are
+handled.
 
-Every planned path is printed first, marked `[present]` or `[missing]`; nothing
-is deleted before you answer **y/yes** at the prompt. Anything else — including
-EOF — aborts with no changes. `--yes` skips the prompt; `--dry-run` never prompts.
+Every planned path is printed first. Unchanged owned entries are marked
+`[present]`; missing, modified, and shared entries are kept and identified in
+the plan. Nothing is deleted before you answer **y/yes** at the prompt. Anything
+else — including EOF — aborts with no changes. `--yes` skips the prompt;
+`--dry-run` never prompts.
 
 Notes:
 
 - `CODING_STANDARDS.md` is never removed.
-- `grill-me`, `grilling`, and `orchestrate`, installed alongside retemper, are
-  removed with it — including `$CODEX_HOME/skills` symlinks for user scope.
+- Only unchanged files and links recorded in the install ownership manifest are
+  removed. Modified files and unowned children are preserved.
+- Shared Codex, Copilot, and Cursor files remain until their last recorded owner
+  is uninstalled.
+- New installs remember their physical destinations, including `$CODEX_HOME`
+  compatibility links. A legacy `installs.txt` record is still accepted when
+  its destination can be verified safely; otherwise reinstall or update it to
+  create ownership metadata before uninstalling.
 - Empty folders left behind are pruned; install roots themselves stay.
 - Uninstalled records disappear from `installs.txt`; the file is deleted when
   the last record goes.

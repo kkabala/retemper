@@ -39,6 +39,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { createInstallManifest, writeCoherentInstallManifests } from "./lib/install-manifest.ts";
+
 const here = dirname(fileURLToPath(import.meta.url));
 export const NAME = "retemper";
 export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot", "cursor"];
@@ -400,7 +402,11 @@ function readInstallRecords(filePath = installsPath()): InstallEntry[] | null {
 
 function recordInstall(plan: InstallPlan): void {
   const filePath = installsPath();
-  writeInstalls(upsertInstalls(readInstallRecords(filePath) || [], recordFromPlan(plan)), filePath);
+  const record = recordFromPlan(plan);
+  const entries = readInstallRecords(filePath) || [];
+  const trackedRecords = entries.filter((entry): entry is ValidInstall => !entry.invalid);
+  writeCoherentInstallManifests(retemperHome(), createInstallManifest(plan, record), trackedRecords);
+  writeInstalls(upsertInstalls(entries, record), filePath);
 }
 
 function sharedSources(): SharedSources {
@@ -767,7 +773,7 @@ type UpdateOutcome = {
   failed: boolean;
 };
 
-function updateOne(entry: InstallEntry, opts: ParsedArgs): UpdateOutcome {
+function updateOne(entry: InstallEntry, opts: ParsedArgs, trackedRecords: ValidInstall[]): UpdateOutcome {
   if (entry.invalid) {
     console.error(`Skipping malformed install record: ${entry.raw}`);
     return { keep: true, entry, failed: false };
@@ -786,6 +792,8 @@ function updateOne(entry: InstallEntry, opts: ParsedArgs): UpdateOutcome {
     console.log(describe(plan, opts));
     if (!opts.dryRun) {
       applyPlan(plan, opts);
+      const record = recordFromPlan(plan);
+      writeCoherentInstallManifests(retemperHome(), createInstallManifest(plan, record), trackedRecords);
     }
     return { keep: true, entry: recordFromPlan(plan), failed: false };
   } catch (error) {
@@ -807,8 +815,9 @@ function runUpdate(opts: ParsedArgs): number {
   }
   let kept: InstallEntry[] = [];
   let failed = 0;
+  const trackedRecords = entries.filter((entry): entry is ValidInstall => !entry.invalid);
   for (const entry of entries) {
-    const outcome = updateOne(entry, opts);
+    const outcome = updateOne(entry, opts, trackedRecords);
     if (outcome.keep) {
       if (outcome.entry.invalid) kept.push(outcome.entry);
       else kept = upsertInstalls(kept, outcome.entry);

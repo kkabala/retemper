@@ -1,35 +1,28 @@
 #!/usr/bin/env node
-/**
- * Retemper uninstaller — removes what install.ts wrote.
- *
- *   node uninstall.ts --help
- *   node uninstall.ts                          # --all: every recorded install
- *   node uninstall.ts --all --dry-run
- *   node uninstall.ts --yes                    # skip the confirmation prompt
- *   node uninstall.ts --platform grok --scope user
- *   node uninstall.ts --platform grok,codex --scope user
- *   node uninstall.ts --platform codex --scope project --target /path/to/repo
- *
- * Every planned path is printed first; nothing is removed before you accept
- * the y/N prompt (or pass --yes). CODING_STANDARDS.md is never removed.
- */
+/** Retemper uninstaller with verified, file-level ownership. */
 
+import { createHash } from "node:crypto";
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 
 import {
+  agentsHome,
   formatInstalls,
+  grokHome,
   installsPath,
   NAME,
   parseInstalls,
@@ -39,6 +32,15 @@ import {
   SUPPORTED_SCOPES,
 } from "./install.ts";
 import type { InstallEntry, InstallPlan, ValidInstall } from "./install.ts";
+import {
+  createLegacyInstallManifest,
+  finalizeInstallManifestRemoval,
+  isMissingPathError,
+  ownedEntryKey,
+  readInstallManifest,
+  removeInstallManifest,
+} from "./lib/install-manifest.ts";
+import type { InstallManifest, OwnedEntry, PhysicalDirectory, PhysicalRoot } from "./lib/install-manifest.ts";
 
 export type ParsedUninstallArgs = {
   help: boolean;
@@ -51,46 +53,70 @@ export type ParsedUninstallArgs = {
   target: string;
 };
 
-export type RemovalGroup = {
-  record: ValidInstall;
-  plan: InstallPlan;
-  paths: string[];
+type LoadedInstall = { record: ValidInstall; manifest: InstallManifest; legacy: boolean };
+type RemovalState = "remove" | "missing" | "modified" | "shared";
+type RemovalJob = {
+  owner: LoadedInstall;
+  entry: OwnedEntry;
+  path: string;
+  key: string;
+  state: RemovalState;
+};
+type TrackingSnapshot = {
+  filePath: string;
+  text: string | null;
+  entries: InstallEntry[];
+  valid: ValidInstall[];
 };
 
-function splitPlatformList(value: unknown): string[] {
-  return String(value)
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean);
-}
-
-function uniqueNames(names: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const name of names) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    out.push(name);
+function nodeErrorCode(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
   }
-  return out;
+  return undefined;
 }
 
-function takePlatforms(
-  rest: string[],
-  index: number,
-  token: string,
-): { names: string[]; index: number } {
+function supportedPlatformList(): string {
+  if (SUPPORTED_PLATFORMS.length < 2) return SUPPORTED_PLATFORMS.join("");
+  return `${SUPPORTED_PLATFORMS.slice(0, -1).join(", ")}, or ${SUPPORTED_PLATFORMS.at(-1)}`;
+}
+
+function splitPlatformList(value: unknown): string[] {
+  return String(value).split(",").map((name) => name.trim()).filter(Boolean);
+}
+
+function takePlatforms(rest: string[], index: number, token: string): { names: string[]; index: number } {
   const names: string[] = [];
   if (token.startsWith("--platform=")) {
     names.push(...splitPlatformList(token.slice("--platform=".length)));
+    if (!names.length) throw new Error("--platform requires a value.");
     return { names, index };
   }
-  let i = index;
-  while (i + 1 < rest.length && !String(rest[i + 1]).startsWith("-")) {
-    names.push(...splitPlatformList(rest[i + 1]));
-    i += 1;
+  let next = index;
+  while (next + 1 < rest.length && !rest[next + 1].startsWith("-")) {
+    names.push(...splitPlatformList(rest[next + 1]));
+    next += 1;
   }
-  return { names, index: i };
+  if (!names.length) throw new Error("--platform requires a value.");
+  return { names, index: next };
+}
+
+function takeOptionValue(
+  rest: string[],
+  index: number,
+  token: string,
+  option: string,
+): { value: string; index: number } {
+  const prefix = `${option}=`;
+  if (token.startsWith(prefix)) {
+    const value = token.slice(prefix.length);
+    if (!value) throw new Error(`${option} requires a value.`);
+    return { value, index };
+  }
+  const value = rest[index + 1];
+  if (!value || value.startsWith("-")) throw new Error(`${option} requires a value.`);
+  return { value, index: index + 1 };
 }
 
 export function parseUninstallArgs(argv: string[]): ParsedUninstallArgs {
@@ -105,23 +131,32 @@ export function parseUninstallArgs(argv: string[]): ParsedUninstallArgs {
     target: "",
   };
   const rest = argv.slice(2);
-  for (let i = 0; i < rest.length; i += 1) {
-    const token = rest[i];
+  let filterSeen = false;
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
     if (token === "--help" || token === "-h") out.help = true;
     else if (token === "--dry-run") out.dryRun = true;
     else if (token === "--yes" || token === "-y") out.yes = true;
     else if (token === "--all") out.allExplicit = true;
     else if (token === "--platform" || token.startsWith("--platform=")) {
-      const taken = takePlatforms(rest, i, token);
+      filterSeen = true;
+      const taken = takePlatforms(rest, index, token);
       out.platforms.push(...taken.names);
-      i = taken.index;
-    } else if (token === "--scope") out.scope = String(rest[++i] || "");
-    else if (token === "--target") out.target = String(rest[++i] || "");
-    else throw new Error(`Unknown argument: ${token}`);
+      index = taken.index;
+    } else if (token === "--scope" || token.startsWith("--scope=")) {
+      filterSeen = true;
+      const taken = takeOptionValue(rest, index, token, "--scope");
+      out.scope = taken.value;
+      index = taken.index;
+    } else if (token === "--target" || token.startsWith("--target=")) {
+      filterSeen = true;
+      const taken = takeOptionValue(rest, index, token, "--target");
+      out.target = taken.value;
+      index = taken.index;
+    } else throw new Error(`Unknown argument: ${token}`);
   }
-  out.platforms = uniqueNames(out.platforms);
-  const hasFilters = Boolean(out.platforms.length || out.scope || out.target);
-  out.all = !hasFilters;
+  out.platforms = [...new Set(out.platforms)];
+  out.all = !filterSeen;
   return out;
 }
 
@@ -131,16 +166,10 @@ export function validateUninstallArgs(opts: ParsedUninstallArgs): void {
     throw new Error("Use either --all or explicit --platform/--scope/--target filters, not both.");
   }
   if (opts.all) return;
-  if (!opts.platforms.length) {
-    throw new Error(
-      'Unsupported platform "(missing)". Pick platform=grok, platform=codex, or platform=copilot.',
-    );
-  }
+  if (!opts.platforms.length) throw new Error(`Unsupported platform "(missing)". Pick ${supportedPlatformList()}.`);
   for (const platform of opts.platforms) {
     if (!SUPPORTED_PLATFORMS.includes(platform)) {
-      throw new Error(
-        `Unsupported platform "${platform}". Pick platform=grok, platform=codex, or platform=copilot.`,
-      );
+      throw new Error(`Unsupported platform "${platform}". Pick ${supportedPlatformList()}.`);
     }
   }
   if (!SUPPORTED_SCOPES.includes(opts.scope)) {
@@ -158,90 +187,210 @@ export function removalPaths(plan: InstallPlan): string[] {
     plan.orchestrateDest,
     plan.refsDest,
     ...plan.skillDests,
-    ...(plan.skillLinks || []).map((link) => link.dest),
+    ...plan.skillLinks.map((link) => link.dest),
   ];
-  const seen = new Set<string>();
-  const paths: string[] = [];
-  for (const path of candidates) {
-    if (!path || seen.has(path)) continue;
-    seen.add(path);
-    paths.push(path);
-  }
-  paths.sort((a, b) => b.length - a.length);
-  return paths;
+  return [...new Set(candidates.filter((path): path is string => Boolean(path)))]
+    .sort((left, right) => right.length - left.length);
 }
 
-export function buildGroups(records: ValidInstall[], opts: ParsedUninstallArgs): RemovalGroup[] {
-  if (opts.all) {
-    return records.map((record) => {
-      const plan = planInstall({
-        platform: record.platform,
-        scope: record.scope,
-        target: record.path,
-      });
-      return { record, plan, paths: removalPaths(plan) };
-    });
-  }
-  const groups: RemovalGroup[] = [];
-  for (const platform of opts.platforms) {
-    const plan = planInstall({ platform, scope: opts.scope, target: opts.target });
-    groups.push({
-      record: { platform, scope: opts.scope, path: plan.targetRoot },
-      plan,
-      paths: removalPaths(plan),
-    });
-  }
-  return groups;
+function sameRecordDestination(left: ValidInstall, right: ValidInstall): boolean {
+  if (left.platform !== right.platform || left.scope !== right.scope) return false;
+  if (left.scope === "user") return true;
+  return resolve(left.path) === resolve(right.path);
 }
 
-function matchesRecord(entry: ValidInstall, record: ValidInstall): boolean {
-  if (entry.platform !== record.platform || entry.scope !== record.scope) return false;
-  if (entry.scope === "user") return true;
-  try {
-    return resolve(entry.path) === resolve(record.path);
-  } catch {
-    return entry.path === record.path;
-  }
-}
-
-export function matchedEntries(entries: InstallEntry[], groups: RemovalGroup[]): ValidInstall[] {
+export function matchedEntries(entries: InstallEntry[], records: { record: ValidInstall }[]): ValidInstall[] {
   return entries.filter(
     (entry): entry is ValidInstall =>
-      !entry.invalid && groups.some((group) => matchesRecord(entry, group.record)),
+      !entry.invalid && records.some(({ record }) => sameRecordDestination(entry, record)),
   );
 }
 
-function pathState(path: string): "present" | "missing" {
+function readTracking(filePath: string): TrackingSnapshot {
+  let text: string;
   try {
-    lstatSync(path);
-    return "present";
-  } catch {
-    return "missing";
+    text = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) return { filePath, text: null, entries: [], valid: [] };
+    throw error;
+  }
+  const entries = parseInstalls(text);
+  return {
+    filePath,
+    text,
+    entries,
+    valid: entries.filter((entry): entry is ValidInstall => !entry.invalid),
+  };
+}
+
+function selectedRecords(snapshot: TrackingSnapshot, opts: ParsedUninstallArgs): ValidInstall[] {
+  if (opts.all) return snapshot.valid;
+  const requested = opts.platforms.map((platform) => ({
+    record: { platform, scope: opts.scope, path: resolve(opts.target || ".") },
+  }));
+  return matchedEntries(snapshot.entries, requested);
+}
+
+function legacyMigrationError(record: ValidInstall, reason: string): Error {
+  return new Error(
+    `Legacy install record cannot be safely uninstalled (${record.platform} ${record.scope} ${record.path}): ${reason}. ` +
+    "Restore the recorded homes, then reinstall or run update to migrate ownership metadata.",
+  );
+}
+
+function expectedLegacyHome(record: ValidInstall): string | null {
+  if (record.scope !== "user") return null;
+  return record.platform === "grok" ? grokHome() : agentsHome();
+}
+
+function assertUnaliasedRoot(record: ValidInstall, path: string): void {
+  if (!isAbsolute(path)) throw legacyMigrationError(record, "the recorded root is not absolute");
+  try {
+    if (realpathSync(path) !== resolve(path)) {
+      throw legacyMigrationError(record, `the root is an unverified filesystem alias: ${path}`);
+    }
+  } catch (error) {
+    if (isMissingPathError(error)) throw legacyMigrationError(record, `the recorded root is missing: ${path}`);
+    throw error;
   }
 }
 
-export function describeRemoval(
-  groups: RemovalGroup[],
-  filePath: string,
-  forgetCount: number,
-  opts: { dryRun?: boolean },
-): string {
-  const lines: string[] = ["retemper uninstall — planned removals", ""];
-  let total = 0;
-  let present = 0;
-  for (const group of groups) {
-    lines.push(`${group.plan.platform} ${group.plan.scope} (root: ${group.plan.targetRoot})`);
-    for (const path of group.paths) {
-      const state = pathState(path);
-      if (state === "present") present += 1;
-      total += 1;
-      lines.push(`  [${state}] remove ${path}`);
+function assertLegacyDirectoriesUnaliased(record: ValidInstall, manifest: InstallManifest): void {
+  for (const directory of manifest.directories) {
+    const path = join(manifest.roots[directory.root].path, directory.relativePath);
+    let stats;
+    try {
+      stats = lstatSync(path);
+    } catch (error) {
+      if (isMissingPathError(error)) throw legacyMigrationError(record, `an expected directory is missing: ${path}`);
+      throw error;
+    }
+    if (stats.isSymbolicLink() || realpathSync(path) !== resolve(path)) {
+      throw legacyMigrationError(record, `an intermediate path is an unverified filesystem alias: ${path}`);
     }
   }
-  if (!present) lines.push("  (no files found)");
+}
+
+function loadLegacyInstall(record: ValidInstall): LoadedInstall {
+  const expectedHome = expectedLegacyHome(record);
+  if (expectedHome && resolve(expectedHome) !== resolve(record.path)) {
+    throw legacyMigrationError(record, "current homes differ from the recorded destination");
+  }
+  if (record.platform === "codex" && record.scope === "user") {
+    throw legacyMigrationError(record, "the Codex compatibility home was not recorded");
+  }
+  assertUnaliasedRoot(record, record.path);
+  const plan = planInstall({ platform: record.platform, scope: record.scope, target: record.path });
+  const manifest = createLegacyInstallManifest(plan, record);
+  for (const root of manifest.roots) assertUnaliasedRoot(record, root.path);
+  assertLegacyDirectoriesUnaliased(record, manifest);
+  return { record, manifest, legacy: true };
+}
+
+function loadInstall(record: ValidInstall): LoadedInstall {
+  const manifest = readInstallManifest(retemperHome(), record);
+  return manifest ? { record, manifest, legacy: false } : loadLegacyInstall(record);
+}
+
+function verifyPhysicalIdentity(
+  path: string,
+  expected: Pick<PhysicalRoot | PhysicalDirectory, "realPath" | "device" | "inode">,
+): boolean {
+  let realPath: string;
+  let stats;
+  try {
+    realPath = realpathSync(path);
+    stats = statSync(path, { bigint: true });
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
+  }
+  if (realPath !== expected.realPath || String(stats.dev) !== expected.device || String(stats.ino) !== expected.inode) {
+    throw new Error(`Recorded physical identity changed at ${path}; refusing a possibly retargeted removal.`);
+  }
+  return true;
+}
+
+function verifyManifestIdentity(manifest: InstallManifest): void {
+  for (const root of manifest.roots) verifyPhysicalIdentity(root.path, root);
+  for (const directory of manifest.directories) {
+    verifyPhysicalIdentity(join(manifest.roots[directory.root].path, directory.relativePath), directory);
+  }
+}
+
+function entryPath(manifest: InstallManifest, entry: OwnedEntry): string {
+  return join(manifest.roots[entry.root].path, entry.relativePath);
+}
+
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function inspectEntry(manifest: InstallManifest, entry: OwnedEntry): "remove" | "missing" | "modified" {
+  const path = entryPath(manifest, entry);
+  let stats;
+  try {
+    stats = lstatSync(path);
+  } catch (error) {
+    if (isMissingPathError(error)) return "missing";
+    throw error;
+  }
+  if (entry.kind === "file") {
+    if (!stats.isFile() || realpathSync(path) !== entry.realPath) return "modified";
+    return sha256File(path) === entry.sha256 ? "remove" : "modified";
+  }
+  if (!stats.isSymbolicLink()) return "modified";
+  return resolve(dirname(path), readlinkSync(path)) === entry.target ? "remove" : "modified";
+}
+
+function preflight(all: LoadedInstall[], selected: Set<ValidInstall>): RemovalJob[] {
+  for (const install of all) verifyManifestIdentity(install.manifest);
+  const protectedEntries = new Set<string>();
+  for (const install of all) {
+    if (selected.has(install.record)) continue;
+    for (const entry of install.manifest.entries) protectedEntries.add(ownedEntryKey(install.manifest, entry));
+  }
+  const jobs = new Map<string, RemovalJob>();
+  for (const install of all) {
+    if (!selected.has(install.record)) continue;
+    for (const entry of install.manifest.entries) {
+      const key = ownedEntryKey(install.manifest, entry);
+      const state = protectedEntries.has(key) ? "shared" : inspectEntry(install.manifest, entry);
+      const candidate = { owner: install, entry, path: entryPath(install.manifest, entry), key, state };
+      const existing = jobs.get(key);
+      if (!existing || (existing.state !== "remove" && state === "remove")) jobs.set(key, candidate);
+    }
+  }
+  return [...jobs.values()].sort((left, right) => right.path.length - left.path.length);
+}
+
+function describeRemoval(
+  installs: LoadedInstall[],
+  selected: Set<ValidInstall>,
+  jobs: RemovalJob[],
+  filePath: string,
+  opts: ParsedUninstallArgs,
+): string {
+  const lines = ["retemper uninstall — planned removals", ""];
+  const jobsByRecord = new Map<ValidInstall, RemovalJob[]>();
+  for (const job of jobs) {
+    const listed = jobsByRecord.get(job.owner.record) || [];
+    listed.push(job);
+    jobsByRecord.set(job.owner.record, listed);
+  }
+  for (const install of installs) {
+    if (!selected.has(install.record)) continue;
+    lines.push(`${install.record.platform} ${install.record.scope}${install.legacy ? " legacy" : ""} (root: ${install.record.path})`);
+    for (const job of jobsByRecord.get(install.record) || []) {
+      if (job.state === "remove") lines.push(`  [present] remove ${job.path}`);
+      else if (job.state === "missing") lines.push(`  [missing] ${job.path}`);
+      else lines.push(`  [${job.state}] keep ${job.path}`);
+    }
+  }
+  if (!jobs.length) lines.push("  (no files found)");
   lines.push("");
-  lines.push("kept: CODING_STANDARDS.md is never removed.");
-  lines.push(`tracking: ${forgetCount} record(s) will be dropped from ${filePath}`);
+  lines.push("kept: CODING_STANDARDS.md and unowned or modified contents are never removed.");
+  lines.push(`tracking: ${selected.size} record(s) will be dropped from ${filePath}`);
   lines.push("");
   if (opts.dryRun) lines.push("dry-run: no files removed, no prompt");
   return lines.join("\n");
@@ -265,113 +414,116 @@ function confirmRemoval(): Promise<boolean> {
   });
 }
 
-function withinRoot(path: string, root: string): boolean {
-  if (path === root) return true;
-  const prefix = root.endsWith(sep) ? root : root + sep;
-  return path.startsWith(prefix);
+function sameRemovalSet(before: RemovalJob[], after: RemovalJob[]): boolean {
+  const keys = (jobs: RemovalJob[]) => jobs.filter((job) => job.state === "remove").map((job) => job.key).sort();
+  return JSON.stringify(keys(before)) === JSON.stringify(keys(after));
 }
 
-function pruneEmptyParents(removedPaths: string[], root: string): void {
-  for (const path of removedPaths) {
-    let current = dirname(path);
-    while (withinRoot(current, root) && current !== root) {
-      try {
-        rmdirSync(current);
-      } catch {
-        break;
-      }
-      current = dirname(current);
-    }
-  }
-}
-
-function applyRemovals(groups: RemovalGroup[]): number {
-  const jobs: { path: string; root: string }[] = [];
-  const seen = new Set<string>();
-  for (const group of groups) {
-    for (const path of group.paths) {
-      if (seen.has(path)) continue;
-      seen.add(path);
-      jobs.push({ path, root: group.plan.targetRoot });
-    }
-  }
-  let removed = 0;
+function applyRemovals(jobs: RemovalJob[]): void {
   for (const job of jobs) {
-    if (pathState(job.path) === "missing") continue;
-    rmSync(job.path, { recursive: true, force: true });
-    removed += 1;
-    pruneEmptyParents([job.path], job.root);
+    if (job.state !== "remove") continue;
+    verifyManifestIdentity(job.owner.manifest);
+    if (inspectEntry(job.owner.manifest, job.entry) !== "remove") {
+      throw new Error(`Owned entry changed after confirmation; nothing further was removed: ${job.path}`);
+    }
+    unlinkSync(job.path);
   }
-  return removed;
+}
+
+function pruneEmptyOwnedDirectories(installs: LoadedInstall[], selected: Set<ValidInstall>): void {
+  const directories = new Map<string, { manifest: InstallManifest; directory: PhysicalDirectory }>();
+  const protectedDirectories = new Set<string>();
+  for (const install of installs) {
+    if (selected.has(install.record)) continue;
+    for (const directory of install.manifest.directories) protectedDirectories.add(directory.realPath);
+  }
+  for (const install of installs) {
+    if (!selected.has(install.record)) continue;
+    for (const directory of install.manifest.directories) {
+      if (protectedDirectories.has(directory.realPath)) continue;
+      const path = join(install.manifest.roots[directory.root].path, directory.relativePath);
+      directories.set(path, { manifest: install.manifest, directory });
+    }
+  }
+  for (const [path, { manifest, directory }] of [...directories].sort(
+    ([left], [right]) => right.length - left.length,
+  )) {
+    const root = manifest.roots[directory.root];
+    if (!verifyPhysicalIdentity(root.path, root) || !verifyPhysicalIdentity(path, directory)) continue;
+    try {
+      rmdirSync(path);
+    } catch (error) {
+      const code = nodeErrorCode(error);
+      if (["ENOENT", "ENOTDIR", "ENOTEMPTY", "EEXIST"].includes(code || "")) continue;
+      throw error;
+    }
+  }
 }
 
 function writeTracking(entries: InstallEntry[], filePath: string): void {
   if (!entries.length) {
     rmSync(filePath, { force: true });
-    try {
-      rmdirSync(retemperHome());
-    } catch {
-      return;
-    }
     return;
   }
   mkdirSync(dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmp, formatInstalls(entries));
-  renameSync(tmp, filePath);
+  const temporary = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(temporary, formatInstalls(entries));
+  renameSync(temporary, filePath);
 }
 
-function applyTrackingUpdates(filePath: string, groups: RemovalGroup[], opts: ParsedUninstallArgs): void {
-  if (opts.dryRun) return;
-  if (!existsSync(filePath)) return;
-  const entries = parseInstalls(readFileSync(filePath, "utf8"));
-  const matched = matchedEntries(entries, groups);
-  if (!matched.length) return;
-  const matchedSet = new Set(matched);
-  const kept = entries.filter((entry) => entry.invalid || !matchedSet.has(entry));
-  writeTracking(kept, filePath);
+function assertTrackingUnchanged(snapshot: TrackingSnapshot): void {
+  let current: string | null;
+  try {
+    current = readFileSync(snapshot.filePath, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) current = null;
+    else throw error;
+  }
+  if (current !== snapshot.text) {
+    throw new Error("Install tracking changed after the uninstall plan was shown; rerun to review the new plan.");
+  }
 }
 
-function readValidRecords(filePath: string): { entries: InstallEntry[]; valid: ValidInstall[] } | null {
-  if (!existsSync(filePath)) return null;
-  const entries = parseInstalls(readFileSync(filePath, "utf8"));
-  return {
-    entries,
-    valid: entries.filter((entry): entry is ValidInstall => !entry.invalid),
-  };
+function cleanupStateDirectories(): void {
+  for (const path of [join(retemperHome(), "manifests"), join(retemperHome(), "manifest-expectations"), retemperHome()]) {
+    try {
+      rmdirSync(path);
+    } catch {
+      // Best-effort cleanup never changes the uninstall result.
+    }
+  }
 }
 
 export function helpText(): string {
   return [
     "retemper uninstaller",
     "",
-    "Removes the files the installer wrote. Prints every path first;",
-    "nothing is deleted until you accept.",
+    "Removes only unchanged files and links recorded as installer-owned.",
+    "Every path is shown before the confirmation gate.",
     "",
     "Usage:",
     "  node uninstall.ts [--all] [--dry-run] [--yes]",
-    "  node uninstall.ts --platform grok --scope user [--dry-run] [--yes]",
-    "  node uninstall.ts --platform grok,codex --scope user",
-    "  node uninstall.ts --platform codex --scope project --target <repo> [--yes]",
+    "  node uninstall.ts --platform codex --scope user [--dry-run] [--yes]",
+    "  node uninstall.ts --platform codex,cursor --scope project --target <repo>",
     "  node retemper.ts uninstall [same flags]",
     "",
     "Options:",
-    "  --all                     Remove every install recorded in ~/.retemper/installs.txt",
-    "                            ($RETEMPER_HOME/installs.txt). Default when no filter is given.",
-    "  --platform grok|codex|copilot[,...]",
-    "                            Only these platforms; repeat the flag, commas, or spaces",
-    "  --scope user|project      Only this scope",
+    "  --all                     Remove every recorded install; Default when no filter is given",
+    "                            Records are read from ~/.retemper/installs.txt ($RETEMPER_HOME).",
+    `  --platform ${SUPPORTED_PLATFORMS.join("|")}[,...]`,
+    "                            Repeat the flag, commas, or spaces",
+    "  --scope user|project      Select one scope",
     "  --target <dir>            Required with --scope project",
     "  --dry-run                 Print the paths, remove nothing, never prompts",
     "  --yes, -y                 Skip the confirmation prompt",
     "  --help                    This text",
     "",
     "Notes:",
-    "  CODING_STANDARDS.md is never removed.",
-    "  grill-me, grilling, and orchestrate skills installed alongside retemper go with it,",
-    "  including $CODEX_HOME/skills symlinks for user-scope installs.",
+    "  CODING_STANDARDS.md is never removed; modified files and unowned children are kept.",
+    "  Shared Codex, Copilot, and Cursor files remain until their last owner is removed.",
+    "  Legacy records are accepted only when current destinations can be verified safely;",
+    "  reinstall or update first when the command reports migration is required.",
     "  The prompt accepts y or yes; anything else, including EOF, aborts.",
-    "  Empty folders left behind are cleaned up; install roots themselves stay.",
   ].join("\n");
 }
 
@@ -382,42 +534,41 @@ export async function uninstallMain(argv: string[] = process.argv): Promise<numb
     return 0;
   }
   validateUninstallArgs(opts);
-
-  const filePath = installsPath();
-  let groups: RemovalGroup[] = [];
-  let forgetCount = 0;
-
-  if (opts.all) {
-    const records = readValidRecords(filePath);
-    if (records === null || records.valid.length === 0) {
-      console.log(describeRemoval([], filePath, 0, opts));
-      console.log("Nothing to uninstall.");
-      return 0;
-    }
-    forgetCount = records.valid.length;
-    groups = buildGroups(records.valid, opts);
-  } else {
-    groups = buildGroups([], opts);
-    if (existsSync(filePath)) {
-      forgetCount = matchedEntries(parseInstalls(readFileSync(filePath, "utf8")), groups).length;
-    }
-  }
-
-  console.log(describeRemoval(groups, filePath, forgetCount, opts));
-  if (opts.dryRun) {
+  const snapshot = readTracking(installsPath());
+  const selectedRecordsList = selectedRecords(snapshot, opts);
+  if (!selectedRecordsList.length) {
+    console.log("retemper uninstall — planned removals\n\n  (no files found)\n");
+    console.log("Nothing to uninstall.");
     return 0;
   }
 
-  if (!opts.yes) {
-    const accepted = await confirmRemoval();
-    if (!accepted) {
-      console.log("Aborted. Nothing was removed.");
-      return 0;
-    }
+  const selected = new Set(selectedRecordsList);
+  const installs = snapshot.valid.map(loadInstall);
+  const jobs = preflight(installs, selected);
+  console.log(describeRemoval(installs, selected, jobs, snapshot.filePath, opts));
+  if (opts.dryRun) return 0;
+  if (!opts.yes && !(await confirmRemoval())) {
+    console.log("Aborted. Nothing was removed.");
+    return 0;
   }
 
-  applyRemovals(groups);
-  applyTrackingUpdates(filePath, groups, opts);
+  assertTrackingUnchanged(snapshot);
+  const finalJobs = preflight(installs, selected);
+  if (!sameRemovalSet(jobs, finalJobs)) {
+    throw new Error("Owned paths changed after the uninstall plan was shown; rerun to review the new plan.");
+  }
+  applyRemovals(finalJobs);
+  pruneEmptyOwnedDirectories(installs, selected);
+
+  for (const install of installs) {
+    if (selected.has(install.record) && !install.legacy) removeInstallManifest(retemperHome(), install.record);
+  }
+  const kept = snapshot.entries.filter((entry) => entry.invalid || !selected.has(entry));
+  writeTracking(kept, snapshot.filePath);
+  for (const install of installs) {
+    if (selected.has(install.record) && !install.legacy) finalizeInstallManifestRemoval(retemperHome(), install.record);
+  }
+  cleanupStateDirectories();
   console.log(`uninstalled ${NAME}`);
   return 0;
 }
@@ -435,7 +586,7 @@ function invokedAsThisModule(moduleUrl: string): boolean {
 if (invokedAsThisModule(import.meta.url)) {
   try {
     const code = await uninstallMain();
-    if (typeof code === "number" && code !== 0) process.exit(code);
+    if (code !== 0) process.exit(code);
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
