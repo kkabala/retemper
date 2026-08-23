@@ -595,8 +595,9 @@ function nodeErrorCode(error: unknown): string | undefined {
 }
 
 function replaceWithSymlink(src: string, dest: string): void {
-  mkdirSync(dirname(dest), { recursive: true });
   const absSrc = resolve(src);
+  if (absSrc === resolve(dest)) return;
+  mkdirSync(dirname(dest), { recursive: true });
   try {
     const st = lstatSync(dest);
     if (st.isSymbolicLink() && resolve(dirname(dest), readlinkSync(dest)) === absSrc) return;

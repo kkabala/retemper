@@ -1084,6 +1084,28 @@ test("CLI --platform grok,codex --scope user writes grok and skill dests under t
   });
 });
 
+test("CLI user install preserves skills when the Agents and Codex homes are the same", () => {
+  const sharedHome = mkdtempSync(join(tmpdir(), "retemper-shared-agent-home-"));
+  withHome((home) => {
+    try {
+      const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+        RETEMPER_HOME: home,
+        AGENTS_HOME: sharedHome,
+        CODEX_HOME: sharedHome,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      for (const name of ["retemper", "orchestrate", "grill-me", "grilling"]) {
+        const skill = join(sharedHome, "skills", name);
+        assert.equal(lstatSync(skill).isDirectory(), true, skill);
+        assert.equal(existsSync(join(skill, "SKILL.md")), true, skill);
+      }
+    } finally {
+      rmSync(sharedHome, { recursive: true, force: true });
+    }
+  });
+});
+
 test("CLI --platform with only commas fails and writes nothing", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-emptyplat-"));
   withHome((home) => {
