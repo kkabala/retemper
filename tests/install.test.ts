@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +39,7 @@ import {
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const installPath = join(root, "install.ts");
 const skillSource = join(root, ".agents", "skills", "retemper", "SKILL.md");
+const installedSkillNames = ["retemper", "orchestrate", "grill-me", "grilling"];
 
 function cli(args: string[], env: NodeJS.ProcessEnv = {}) {
   return spawnSync(process.execPath, [installPath, ...args], {
@@ -44,6 +55,14 @@ function withHome<T>(fn: (home: string) => T): T {
     return fn(home);
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+}
+
+function assertRealSkillDirectories(home: string): void {
+  for (const name of installedSkillNames) {
+    const skill = join(home, "skills", name);
+    assert.equal(lstatSync(skill).isDirectory(), true, skill);
+    assert.equal(existsSync(join(skill, "SKILL.md")), true, skill);
   }
 }
 
@@ -1095,11 +1114,103 @@ test("CLI user install preserves skills when the Agents and Codex homes are the 
       });
 
       assert.equal(result.status, 0, result.stderr);
-      for (const name of ["retemper", "orchestrate", "grill-me", "grilling"]) {
-        const skill = join(sharedHome, "skills", name);
-        assert.equal(lstatSync(skill).isDirectory(), true, skill);
-        assert.equal(existsSync(join(skill, "SKILL.md")), true, skill);
-      }
+      assertRealSkillDirectories(sharedHome);
+    } finally {
+      rmSync(sharedHome, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI user install preserves skills when Codex home aliases Agents home", () => {
+  const agents = mkdtempSync(join(tmpdir(), "retemper-agent-home-"));
+  const aliasRoot = mkdtempSync(join(tmpdir(), "retemper-agent-alias-"));
+  const codex = join(aliasRoot, "codex-home");
+  symlinkSync(agents, codex, "dir");
+  withHome((home) => {
+    try {
+      const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+        RETEMPER_HOME: home,
+        AGENTS_HOME: agents,
+        CODEX_HOME: codex,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      assertRealSkillDirectories(agents);
+    } finally {
+      rmSync(aliasRoot, { recursive: true, force: true });
+      rmSync(agents, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI user install preserves skills across case aliases when supported", (context) => {
+  const agents = mkdtempSync(join(tmpdir(), "retemper-Agent-home-"));
+  const codex = agents.replace("Agent", "agent");
+  if (!existsSync(codex)) {
+    rmSync(agents, { recursive: true, force: true });
+    context.skip("filesystem is case-sensitive");
+    return;
+  }
+
+  withHome((home) => {
+    try {
+      const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+        RETEMPER_HOME: home,
+        AGENTS_HOME: agents,
+        CODEX_HOME: codex,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      assertRealSkillDirectories(agents);
+    } finally {
+      rmSync(agents, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI user install repairs legacy self-referential skill links", () => {
+  const sharedHome = mkdtempSync(join(tmpdir(), "retemper-legacy-agent-home-"));
+  const skills = join(sharedHome, "skills");
+  mkdirSync(skills, { recursive: true });
+  for (const name of installedSkillNames) {
+    const skill = join(skills, name);
+    symlinkSync(skill, skill, "dir");
+  }
+
+  withHome((home) => {
+    try {
+      const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+        RETEMPER_HOME: home,
+        AGENTS_HOME: sharedHome,
+        CODEX_HOME: sharedHome,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      assertRealSkillDirectories(sharedHome);
+    } finally {
+      rmSync(sharedHome, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI user install does not replace an unrelated dangling skill link", () => {
+  const sharedHome = mkdtempSync(join(tmpdir(), "retemper-dangling-agent-home-"));
+  const skill = join(sharedHome, "skills", "retemper");
+  const unrelatedTarget = join(sharedHome, "unrelated-missing-skill");
+  mkdirSync(dirname(skill), { recursive: true });
+  symlinkSync(unrelatedTarget, skill, "dir");
+
+  withHome((home) => {
+    try {
+      const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+        RETEMPER_HOME: home,
+        AGENTS_HOME: sharedHome,
+        CODEX_HOME: sharedHome,
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.equal(lstatSync(skill).isSymbolicLink(), true);
+      assert.equal(resolve(dirname(skill), readlinkSync(skill)), unrelatedTarget);
     } finally {
       rmSync(sharedHome, { recursive: true, force: true });
     }
