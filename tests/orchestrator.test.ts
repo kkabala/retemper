@@ -230,12 +230,19 @@ test("acceptance: planInstall dests point orchestrate at a sibling skill folder"
     scope: "project",
     target: "/does-not-exist/retemper-orch-copilot",
   });
+  const cursorProject = planInstall({
+    platform: "cursor",
+    scope: "project",
+    target: "/does-not-exist/retemper-orch-cursor",
+  });
 
   const src = join(root, ".agents", "skills", "orchestrate");
   assert.equal(grokUser.orchestrateSrc, src);
   assert.equal(codexUser.orchestrateSrc, src);
   assert.equal(copilotProject.orchestrateSrc, src);
+  assert.equal(cursorProject.orchestrateSrc, src);
   assert.ok(copilotProject.orchestrateDest.endsWith(join(".agents", "skills", "orchestrate")));
+  assert.ok(cursorProject.orchestrateDest.endsWith(join(".agents", "skills", "orchestrate")));
   assert.ok(grokUser.orchestrateDest.endsWith(join("skills", "orchestrate")));
   assert.doesNotMatch(grokUser.orchestrateDest, /\.agents[/\\]/);
   assert.ok(grokProject.orchestrateDest.endsWith(join(".grok", "skills", "orchestrate")));

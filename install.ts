@@ -10,12 +10,14 @@
  *   node install.ts --platform grok --scope project --target /path/to/repo
  *   node install.ts --dry-run --platform codex --scope user
  *   node install.ts --platform copilot --scope project --target /path/to/repo
+ *   node install.ts --platform cursor --scope project --target /path/to/repo
  *   node install.ts --update
  *
- * Codex and GitHub Copilot install the same SKILL.md tree under .agents/skills
- * (project discovery root for both). Codex CLI user discovery is
- * $CODEX_HOME/skills (default ~/.codex/skills); user-scope installs symlink
- * there. There is no second copy under .github/skills or ~/.copilot/skills.
+ * Codex, GitHub Copilot, and Cursor install the same SKILL.md tree under
+ * .agents/skills. Cursor discovers that tree at both project and user scope.
+ * Codex CLI user discovery is $CODEX_HOME/skills (default ~/.codex/skills),
+ * so user-scope installs also symlink there. Platform-specific copies are not
+ * created under .github/skills, ~/.copilot/skills, or .cursor/skills.
  */
 
 import {
@@ -39,8 +41,8 @@ import { spawnSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const NAME = "retemper";
-export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot"];
-export const SKILL_PLATFORMS = ["codex", "copilot"];
+export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot", "cursor"];
+export const SKILL_PLATFORMS = ["codex", "copilot", "cursor"];
 export const SUPPORTED_SCOPES = ["user", "project"];
 
 export type Platform = (typeof SUPPORTED_PLATFORMS)[number];
@@ -112,6 +114,7 @@ const GRILL_FETCH_AGENT: Record<string, string> = {
   grok: "grok",
   codex: "cline",
   copilot: "cline",
+  cursor: "cline",
 };
 
 function grillFetchCommands(scope: string, platform: string): string[][] {
@@ -236,7 +239,7 @@ export function helpText(): string {
     "retemper installer",
     "",
     "A project-agnostic plan → accept → build → harden → review → QA → PR cycle.",
-    "Platforms: grok (Grok Build workflow); codex and copilot (shared Agent Skill).",
+    "Platforms: grok (Grok Build workflow); codex, copilot, and cursor (shared Agent Skill).",
     "Also installs the orchestrate skill (generic coordinator) next to grill-me.",
     "",
     "Usage:",
@@ -246,13 +249,14 @@ export function helpText(): string {
     "  node install.ts --platform grok --scope project --target <repo> [--standards]",
     "  node install.ts --platform codex --scope user [--dry-run] [--skip-deps]",
     "  node install.ts --platform copilot --scope project --target <repo> [--standards]",
+    "  node install.ts --platform cursor --scope project --target <repo> [--standards]",
     "  node install.ts --update [--dry-run] [--skip-deps] [--standards]",
     "",
     "Options:",
-    "  --platform grok|codex|copilot[,...]",
+    "  --platform grok|codex|copilot|cursor[,...]",
     "                           Repeat the flag, commas, or spaces: grok,codex or grok codex",
     "                           grok → .rhai workflow under ~/.grok",
-    "                           codex and copilot → same SKILL.md under .agents/skills",
+    "                           codex, copilot, and cursor → same SKILL.md under .agents/skills",
     "                           Codex CLI user also $CODEX_HOME/skills (symlink)",
     "  --scope user|project     grok user → ~/.grok/workflows   grok project → <repo>/.grok/workflows",
     "                           skill user → ~/.agents/skills   skill project → <repo>/.agents/skills",
@@ -267,6 +271,7 @@ export function helpText(): string {
     "  grok:    /workflow retemper <task>     (or /retemper)",
     "  codex:   $retemper <task>              (or pick retemper from /skills)",
     "  copilot: /retemper <task>              (or pick retemper from /skills)",
+    "  cursor:  /retemper <task>              (or type / and pick retemper)",
     "",
     "Dependencies:",
     "  grill-me  (mattpocock/skills) — front door; body is “run a grilling session”",
@@ -376,6 +381,8 @@ export function missingInstallsMessage(filePath = installsPath()): string {
     "  node install.ts --platform grok --scope project --target <repo>",
     "  node install.ts --platform codex --scope user",
     "  node install.ts --platform codex --scope project --target <repo>",
+    "  node install.ts --platform cursor --scope user",
+    "  node install.ts --platform cursor --scope project --target <repo>",
   ].join("\n");
 }
 
@@ -542,7 +549,7 @@ function planSkillPlatform(platform: string, opts: ParsedArgs, sources: SharedSo
 
 function unsupportedPlatformError(platform: string): Error {
   return new Error(
-    `Unsupported platform "${platform || "(missing)"}". Pick platform=grok, platform=codex, or platform=copilot.`,
+    `Unsupported platform "${platform || "(missing)"}". Pick platform=grok, platform=codex, platform=copilot, or platform=cursor.`,
   );
 }
 

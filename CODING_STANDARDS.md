@@ -31,7 +31,7 @@ Keep this file short. Put only rules a stranger would miss.
 - Test behaviour, not implementation.
 - Installer CLI tests that apply or update must set `RETEMPER_HOME` to a temp dir so they never write the real `~/.retemper`.
 - Grok user-scope CLI tests must also set `GROK_HOME` to a temp dir. Skill user-scope CLI tests must set `AGENTS_HOME` and `CODEX_HOME` to temp dirs. Do not write into the real `~/.agents` or `~/.codex` from tests.
-- Skill user-scope payload stays under `~/.agents/skills`. Codex CLI user discovery is `$CODEX_HOME/skills` (default `~/.codex/skills`): symlink the skill folders there after the copy. Project-scope `<repo>/.agents/skills` is enough for Codex.
+- Skill user-scope payload stays under `~/.agents/skills`. Cursor discovers that root directly. Codex CLI user discovery is `$CODEX_HOME/skills` (default `~/.codex/skills`): symlink the skill folders there after the copy. Project-scope `<repo>/.agents/skills` is enough for Codex, Copilot, and Cursor.
 
 ## Style
 
