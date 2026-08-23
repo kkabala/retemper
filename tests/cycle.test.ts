@@ -74,6 +74,10 @@ test("shouldReturnToDevelopment fails closed on malformed or unsupported verdict
   assert.equal(shouldReturnToDevelopment({ return_to_dev: true, evidence: "  " }), true);
   assert.equal(shouldReturnToDevelopment({ return_to_dev: true, evidence: "tests fail" }), true);
   assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence: "" }), true);
+  for (const evidence of ["\u200b", "\u0085", "\ufeff"]) {
+    assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence }), true);
+  }
+  assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence: "." }), false);
   assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence: "ok" }), false);
 });
 
@@ -189,6 +193,23 @@ test("a gate approval without evidence returns to Development", () => {
   assert.equal(walkHasNoSkipReplay(result.walk), true);
 });
 
+test("an approval with only invisible evidence returns to Development", () => {
+  for (const evidence of ["\u200b", "\u0085", "\ufeff"]) {
+    const result = runCycle({
+      args: { task: "fix", no_plan: true, ticket: "T-1", grill: false },
+      decide: (phase, cycle) => {
+        if (phase === "Code review" && cycle === 1) {
+          return { return_to_dev: false, evidence };
+        }
+        return { return_to_dev: false, evidence: "ok", merged: true };
+      },
+    });
+
+    assert.equal(result.walk.filter((phase) => phase === "Development").length, 2);
+    assert.equal(walkHasNoSkipReplay(result.walk), true);
+  }
+});
+
 test("role references stay stack-agnostic and match the named sources", () => {
   const refs = planInstall({ platform: "grok", scope: "user" }).refsSrc;
   assert.equal(existsSync(refs), true);
@@ -279,7 +300,8 @@ test("workflow script declares the same phase titles and the no-skip loop", () =
   assert.match(source, /no-grill/);
   assert.match(source, /MAX_CYCLES/);
   assert.match(source, /return_to_dev/);
-  assert.match(source, /trimmed\(res\.output\.evidence\) == "" \{ return true; \}/);
+  assert.match(source, /fn has_usable_evidence\(/);
+  assert.match(source, /!has_usable_evidence\(res\.output\.evidence\) \{ return true; \}/);
   assert.match(source, /CODING_STANDARDS\.md/);
   assert.match(source, /grill-me/);
   assert.match(source, /update_standards/);

@@ -101,8 +101,14 @@ export type CycleResult = {
 
 export type Decide = (phase: string, cycle: number) => CycleVerdict | unknown;
 
+const VISIBLE_EVIDENCE = /[^\p{White_Space}\p{Cf}\p{Cc}]/u;
+
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function hasUsableEvidence(value: unknown): boolean {
+  return typeof value === "string" && VISIBLE_EVIDENCE.test(value);
 }
 
 function isFalse(value: unknown): boolean {
@@ -242,7 +248,7 @@ export function shouldReturnToDevelopment(verdict: unknown): boolean {
     return true;
   }
   const bag = verdict as CycleVerdict;
-  if (typeof bag?.return_to_dev !== "boolean" || text(bag.evidence) === "") {
+  if (typeof bag?.return_to_dev !== "boolean" || !hasUsableEvidence(bag.evidence)) {
     return true;
   }
   return bag.return_to_dev;
