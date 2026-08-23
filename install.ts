@@ -414,7 +414,7 @@ function sharedSources(): SharedSources {
 }
 
 function skillLinksFor(plan: InstallPlan): SkillLink[] {
-  if (!SKILL_PLATFORMS.includes(plan.platform) || plan.scope !== "user") return [];
+  if (plan.platform !== "codex" || plan.scope !== "user") return [];
   const root = join(codexHome(), "skills");
   const srcs: string[] = [];
   if (plan.skillDest) srcs.push(plan.skillDest);
@@ -719,8 +719,9 @@ export function apply(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
   }
   if (!opts.skipDeps) {
     let failed = false;
+    const cwd = plan.scope === "project" ? plan.targetRoot : undefined;
     for (const argv of plan.fetchCommands) {
-      const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
+      const result = spawnSync(argv[0], argv.slice(1), { cwd, stdio: "inherit" });
       if (result.status !== 0) failed = true;
     }
     if (failed) {
