@@ -32,6 +32,8 @@ export type StateLock = {
   ownerText: string;
   device: string;
   inode: string;
+  ownerDevice: string;
+  ownerInode: string;
 };
 
 export type OwnershipIntent =
@@ -121,6 +123,7 @@ function processIsAlive(pid: number): boolean {
 function recoverDeadStateLock(path: string): void {
   const ownerPath = join(path, "owner");
   let stats;
+  let ownerStats;
   try {
     stats = lstatSync(path, { bigint: true });
   } catch (error) {
@@ -128,6 +131,17 @@ function recoverDeadStateLock(path: string): void {
   }
   if (!stats.isDirectory()) {
     throw lockRecoveryError(path, stats.isSymbolicLink() ? "is a symbolic link" : "is not a directory");
+  }
+  try {
+    ownerStats = lstatSync(ownerPath, { bigint: true });
+  } catch (error) {
+    throw lockRecoveryError(path, `has missing or unreadable owner metadata (${nodeErrorCode(error) || "unknown error"})`);
+  }
+  if (!ownerStats.isFile()) {
+    throw lockRecoveryError(
+      path,
+      ownerStats.isSymbolicLink() ? "has symbolic-link owner metadata" : "owner metadata is not a regular file",
+    );
   }
   let ownerText: string;
   try {
@@ -149,11 +163,15 @@ function recoverDeadStateLock(path: string): void {
   }
   const currentText = readFileSync(ownerPath, "utf8");
   const currentStats = lstatSync(path, { bigint: true });
+  const currentOwnerStats = lstatSync(ownerPath, { bigint: true });
   if (
     !currentStats.isDirectory() ||
+    !currentOwnerStats.isFile() ||
     currentText !== ownerText ||
     String(currentStats.dev) !== String(stats.dev) ||
-    String(currentStats.ino) !== String(stats.ino)
+    String(currentStats.ino) !== String(stats.ino) ||
+    String(currentOwnerStats.dev) !== String(ownerStats.dev) ||
+    String(currentOwnerStats.ino) !== String(ownerStats.ino)
   ) {
     throw lockRecoveryError(path, "changed while dead-owner recovery was in progress");
   }
@@ -203,7 +221,9 @@ export function acquireStateLock(stateHome: string): StateLock {
   try {
     writeFileSync(ownerPath, ownerText, { flag: "wx", mode: 0o600 });
     const stats = lstatSync(path, { bigint: true });
+    const ownerStats = lstatSync(ownerPath, { bigint: true });
     if (!stats.isDirectory()) throw lockRecoveryError(path, "was replaced before ownership metadata was recorded");
+    if (!ownerStats.isFile()) throw lockRecoveryError(path, "created non-regular owner metadata");
     return {
       path,
       ownerPath,
@@ -211,6 +231,8 @@ export function acquireStateLock(stateHome: string): StateLock {
       ownerText,
       device: String(stats.dev),
       inode: String(stats.ino),
+      ownerDevice: String(ownerStats.dev),
+      ownerInode: String(ownerStats.ino),
     };
   } catch (error) {
     try {
@@ -229,8 +251,10 @@ export function acquireStateLock(stateHome: string): StateLock {
 
 export function releaseStateLock(lock: StateLock): void {
   let stats;
+  let ownerStats;
   try {
     stats = lstatSync(lock.path, { bigint: true });
+    ownerStats = lstatSync(lock.ownerPath, { bigint: true });
   } catch (error) {
     if (isMissingPathError(error)) {
       throw new Error(`Retemper state lock ownership was lost at ${lock.path}; refusing unsafe continuation.`);
@@ -240,7 +264,10 @@ export function releaseStateLock(lock: StateLock): void {
   if (
     !stats.isDirectory() ||
     String(stats.dev) !== lock.device ||
-    String(stats.ino) !== lock.inode
+    String(stats.ino) !== lock.inode ||
+    !ownerStats.isFile() ||
+    String(ownerStats.dev) !== lock.ownerDevice ||
+    String(ownerStats.ino) !== lock.ownerInode
   ) {
     throw new Error(`Retemper state lock was replaced at ${lock.path}; refusing to remove a foreign lock.`);
   }
@@ -253,19 +280,25 @@ export function releaseStateLock(lock: StateLock): void {
     }
     throw error;
   }
+  const beforeRemoval = lstatSync(lock.path, { bigint: true });
+  const ownerBeforeRemoval = lstatSync(lock.ownerPath, { bigint: true });
   if (
     owner !== lock.ownerText ||
-    String(stats.dev) !== lock.device ||
-    String(stats.ino) !== lock.inode
+    !beforeRemoval.isDirectory() ||
+    String(beforeRemoval.dev) !== lock.device ||
+    String(beforeRemoval.ino) !== lock.inode ||
+    !ownerBeforeRemoval.isFile() ||
+    String(ownerBeforeRemoval.dev) !== lock.ownerDevice ||
+    String(ownerBeforeRemoval.ino) !== lock.ownerInode
   ) {
     throw new Error(`Retemper state lock was replaced at ${lock.path}; refusing to remove a foreign lock.`);
   }
   unlinkSync(lock.ownerPath);
-  const beforeRemoval = lstatSync(lock.path, { bigint: true });
+  const directoryBeforeRemoval = lstatSync(lock.path, { bigint: true });
   if (
-    !beforeRemoval.isDirectory() ||
-    String(beforeRemoval.dev) !== lock.device ||
-    String(beforeRemoval.ino) !== lock.inode
+    !directoryBeforeRemoval.isDirectory() ||
+    String(directoryBeforeRemoval.dev) !== lock.device ||
+    String(directoryBeforeRemoval.ino) !== lock.inode
   ) {
     throw new Error(`Retemper state lock was replaced at ${lock.path}; refusing to remove a foreign lock.`);
   }

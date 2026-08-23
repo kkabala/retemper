@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -102,6 +103,50 @@ test("acquireStateLock never follows a symlinked lock or removes its external ow
     assert.throws(() => acquireStateLock(home), /symbolic link|not.*directory|manual/i);
     assert.equal(lstatSync(join(home, "state.lock")).isSymbolicLink(), true);
     assert.equal(existsSync(ownerPath), true);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
+test("acquireStateLock never follows a symlinked owner in a real lock directory", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-state-lock-owner-symlink-"));
+  const home = join(holder, "state");
+  const lockPath = join(home, "state.lock");
+  const externalOwner = join(holder, "external-owner.json");
+  const exited = spawnSync(process.execPath, ["-e", ""]);
+  assert.ok(exited.pid);
+  mkdirSync(lockPath, { recursive: true });
+  const ownerText = `${JSON.stringify({
+    version: 1,
+    pid: exited.pid,
+    hostname: hostname(),
+    startedAt: new Date().toISOString(),
+    token: "e".repeat(64),
+  })}\n`;
+  writeFileSync(externalOwner, ownerText);
+  symlinkSync(externalOwner, join(lockPath, "owner"));
+  try {
+    assert.throws(() => acquireStateLock(home), /symbolic link|regular file|manual/i);
+    assert.equal(lstatSync(join(lockPath, "owner")).isSymbolicLink(), true);
+    assert.equal(readFileSync(externalOwner, "utf8"), ownerText);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
+test("releaseStateLock never follows or removes a replacement owner symlink", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-state-release-owner-symlink-"));
+  const home = join(holder, "state");
+  const externalOwner = join(holder, "external-owner.json");
+  try {
+    const lock = acquireStateLock(home);
+    writeFileSync(externalOwner, lock.ownerText);
+    unlinkSync(lock.ownerPath);
+    symlinkSync(externalOwner, lock.ownerPath);
+
+    assert.throws(() => releaseStateLock(lock), /owner|symbolic link|regular file|replaced/i);
+    assert.equal(lstatSync(lock.ownerPath).isSymbolicLink(), true);
+    assert.equal(readFileSync(externalOwner, "utf8"), lock.ownerText);
   } finally {
     rmSync(holder, { recursive: true, force: true });
   }
