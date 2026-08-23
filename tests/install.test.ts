@@ -1535,6 +1535,33 @@ test("CLI user install repairs legacy self-referential skill links", () => {
   });
 });
 
+test("CLI rejects an escaped skills parent before repairing an external self-link", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-escaped-self-link-"));
+  const agents = join(holder, "agents");
+  const externalSkills = join(holder, "external-skills");
+  const home = join(holder, "state");
+  mkdirSync(agents);
+  mkdirSync(externalSkills);
+  symlinkSync(externalSkills, join(agents, "skills"), "dir");
+  const externalSkill = join(externalSkills, "retemper");
+  symlinkSync(externalSkill, externalSkill, "dir");
+  try {
+    const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+      RETEMPER_HOME: home,
+      AGENTS_HOME: agents,
+      CODEX_HOME: agents,
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /outside.*physical.*root|escapes.*target/i);
+    assert.equal(lstatSync(externalSkill).isSymbolicLink(), true);
+    assert.equal(resolve(dirname(externalSkill), readlinkSync(externalSkill)), externalSkill);
+    assert.equal(existsSync(join(home, "installs.txt")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("CLI user install does not replace an unrelated dangling skill link", () => {
   const sharedHome = mkdtempSync(join(tmpdir(), "retemper-dangling-agent-home-"));
   const skill = join(sharedHome, "skills", "retemper");

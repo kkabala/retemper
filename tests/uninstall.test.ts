@@ -22,6 +22,7 @@ import test from "node:test";
 import {
   codexHome,
   installsPath,
+  main as installMain,
   planInstall,
 } from "../install.ts";
 import {
@@ -745,6 +746,76 @@ test("acceptance: a newer shared install adds new files to older owner manifests
       rmSync(target, { recursive: true, force: true });
     }
   });
+});
+
+test("acceptance: a partial peer-manifest update blocks uninstall until the same update repairs it", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-un-dirty-ownership-"));
+  const home = mkdtempSync(join(tmpdir(), "retemper-un-dirty-state-"));
+  const codexRecord = { platform: "codex", scope: "project", path: target } as const;
+  const cursorRecord = { platform: "cursor", scope: "project", path: target } as const;
+  const introducedFile = join(".agents", "skills", "orchestrate", "references", "orchestrator.md");
+  const markerPath = join(home, "ownership-transaction.json");
+  const peerTemporary = `${manifestPath(home, cursorRecord)}.${process.pid}.tmp`;
+  const previousHome = process.env.RETEMPER_HOME;
+  try {
+    const setup = installCli(
+      ["--platform", "codex,cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+    assert.equal(setup.status, 0, setup.stderr);
+    const staleCursor = readInstallManifest(home, cursorRecord);
+    assert.ok(staleCursor);
+    staleCursor.entries = staleCursor.entries.filter((entry) => entry.relativePath !== introducedFile);
+    staleCursor.directories = staleCursor.directories.filter(
+      (directory) => directory.relativePath !== dirname(introducedFile),
+    );
+    writeInstallManifest(home, staleCursor);
+    mkdirSync(peerTemporary);
+    process.env.RETEMPER_HOME = home;
+
+    const failedUpdate = installMain(["node", "install.ts", "--update", "--skip-deps"]);
+
+    assert.equal(failedUpdate, 1);
+    assert.equal(existsSync(markerPath), true);
+    rmSync(peerTemporary, { recursive: true });
+    const unrelated = installCli(
+      ["--platform", "grok", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+    assert.notEqual(unrelated.status, 0);
+    assert.match(unrelated.stderr, /unfinished.*ownership|rerunning the same.*update/i);
+    assert.equal(existsSync(join(target, ".grok")), false);
+    assert.equal(existsSync(markerPath), true);
+    const refused = cli(
+      ["--platform", "codex", "--scope", "project", "--target", target, "--yes"],
+      { RETEMPER_HOME: home },
+    );
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /unfinished.*ownership|dirty.*state|rerun.*update/i);
+    assert.equal(existsSync(join(target, introducedFile)), true);
+
+    const repaired = installMain(["node", "install.ts", "--update", "--skip-deps"]);
+    assert.equal(repaired, 0);
+    assert.equal(existsSync(markerPath), false);
+    const refreshedCursor = readInstallManifest(home, cursorRecord);
+    assert.ok(refreshedCursor);
+    assert.equal(refreshedCursor.entries.some((entry) => entry.relativePath === introducedFile), true);
+
+    const safe = cli(
+      ["--platform", "codex", "--scope", "project", "--target", target, "--yes"],
+      { RETEMPER_HOME: home },
+    );
+    assert.equal(safe.status, 0, safe.stderr);
+    assert.equal(existsSync(join(target, introducedFile)), true);
+    assert.ok(readInstallManifest(home, cursorRecord));
+    assert.equal(readInstallManifest(home, codexRecord), null);
+  } finally {
+    if (previousHome === undefined) delete process.env.RETEMPER_HOME;
+    else process.env.RETEMPER_HOME = previousHome;
+    rmSync(peerTemporary, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("acceptance: Grok ownership is never inferred from a shared project root", () => {

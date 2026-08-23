@@ -488,6 +488,10 @@ export function assertInstallPlanPhysicalContainment(plan: InstallPlan): void {
     assertDestinationPhysicallyContained(plan.targetRoot, candidate.destination);
   }
   if (plan.standardsDest) assertDestinationPhysicallyContained(plan.targetRoot, plan.standardsDest);
+  assertInstallLinkParentPhysicalContainment(plan);
+}
+
+export function assertInstallLinkParentPhysicalContainment(plan: InstallPlan): void {
   for (const link of plan.skillLinks) {
     const externalRoot = externalLinkRoot(link.dest);
     assertDestinationPhysicallyContained(externalRoot, dirname(link.dest));

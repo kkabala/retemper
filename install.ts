@@ -40,11 +40,19 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 import {
+  assertInstallLinkParentPhysicalContainment,
   assertInstallPlanPhysicalContainment,
   createInstallManifest,
   writeCoherentInstallManifests,
 } from "./lib/install-manifest.ts";
-import { rotateStateGeneration, withStateLock } from "./lib/install-state.ts";
+import {
+  assertNoOwnershipTransaction,
+  assertOwnershipIntentAllowed,
+  beginOwnershipTransaction,
+  finishOwnershipTransaction,
+  rotateStateGeneration,
+  withStateLock,
+} from "./lib/install-state.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const NAME = "retemper";
@@ -701,6 +709,7 @@ function replaceWithSymlink(src: string, dest: string): void {
 }
 
 export function apply(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
+  assertInstallLinkParentPhysicalContainment(plan);
   for (const link of plan.skillLinks) {
     repairLegacySelfLink(link.src, link.dest);
   }
@@ -866,12 +875,20 @@ function runPreparedUpdate(
     }
     if (outcome.failed) failed += 1;
   }
-  if (persist) writeInstalls(kept, filePath);
+  if (persist && failed === 0) writeInstalls(kept, filePath);
   return failed === 0 ? 0 : 1;
 }
 
 function hasUpdateMutation(prepared: PreparedUpdate[]): boolean {
   return prepared.some((item) => item.kind === "ready" || item.kind === "missing");
+}
+
+function updateIntentRecords(prepared: PreparedUpdate[]): ValidInstall[] {
+  return prepared.flatMap((item) => {
+    if (item.kind === "ready") return [recordFromPlan(item.plan)];
+    if (item.kind === "missing") return [item.entry];
+    return [];
+  });
 }
 
 function runUpdate(opts: ParsedArgs): number {
@@ -886,16 +903,26 @@ function runUpdate(opts: ParsedArgs): number {
 function runMutatingUpdate(opts: ParsedArgs): number {
   const filePath = installsPath();
   const initial = readInstallRecords(filePath);
+  if (initial === null || initial.length === 0) assertNoOwnershipTransaction(retemperHome());
   const initialNoOp = reportUpdateNoOp(initial, filePath);
   if (initialNoOp !== null) return initialNoOp;
   return withStateLock(retemperHome(), () => {
     const entries = readInstallRecords(filePath);
+    if (entries === null || entries.length === 0) assertNoOwnershipTransaction(retemperHome());
     const lockedNoOp = reportUpdateNoOp(entries, filePath);
     if (lockedNoOp !== null) return lockedNoOp;
     const prepared = entries.map((entry) => prepareUpdate(entry, opts));
-    if (!hasUpdateMutation(prepared)) return runPreparedUpdate(opts, entries, prepared, false);
+    if (!hasUpdateMutation(prepared)) {
+      assertNoOwnershipTransaction(retemperHome());
+      return runPreparedUpdate(opts, entries, prepared, false);
+    }
+    const intent = { kind: "update" as const, records: updateIntentRecords(prepared) };
+    assertOwnershipIntentAllowed(retemperHome(), intent);
     rotateStateGeneration(retemperHome());
-    return runPreparedUpdate(opts, entries, prepared, true);
+    const transaction = beginOwnershipTransaction(retemperHome(), intent);
+    const result = runPreparedUpdate(opts, entries, prepared, true);
+    if (result === 0) finishOwnershipTransaction(transaction);
+    return result;
   });
 }
 
@@ -935,8 +962,13 @@ export function main(argv: string[] = process.argv): number {
   const plans = prepareInstall(opts);
   if (opts.dryRun) return runInstall(opts, plans);
   return withStateLock(retemperHome(), () => {
+    const intent = { kind: "install" as const, records: plans.map(recordFromPlan) };
+    assertOwnershipIntentAllowed(retemperHome(), intent);
     rotateStateGeneration(retemperHome());
-    return runInstall(opts, plans);
+    const transaction = beginOwnershipTransaction(retemperHome(), intent);
+    const result = runInstall(opts, plans);
+    if (result === 0) finishOwnershipTransaction(transaction);
+    return result;
   });
 }
 

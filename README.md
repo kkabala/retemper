@@ -75,6 +75,14 @@ Notes:
 - Install, update, and uninstall mutations are serialized in `$RETEMPER_HOME`.
   An uninstall prompt is rejected if the recorded state changes while it is
   waiting for confirmation.
+- If install or update stops before all ownership manifests and tracking are
+  coherent, uninstall fails closed. Rerun the same install or update record set
+  to repair and clear the unfinished transaction; an unrelated install cannot
+  clear it.
+- State locks record their PID, hostname, start time, and owner token. A dead
+  same-host owner is recovered automatically. Live, foreign-host, or malformed
+  locks are preserved; follow the command's manual-recovery message only after
+  verifying that no retemper process is running.
 - The manifest expectation digest detects torn or mismatched local state. It is
   not an authentication boundary against another process running as the same
   account.

@@ -43,6 +43,7 @@ import {
 import type { InstallManifest, OwnedEntry, PhysicalDirectory, PhysicalRoot } from "./lib/install-manifest.ts";
 import {
   acquireStateLock,
+  assertNoOwnershipTransaction,
   assertStateGeneration,
   readStateGeneration,
   releaseStateLock,
@@ -549,6 +550,7 @@ export async function uninstallMain(argv: string[] = process.argv): Promise<numb
   const planningLock = acquireStateLock(stateHome);
   let planned: UninstallPlan;
   try {
+    assertNoOwnershipTransaction(stateHome);
     planned = loadUninstallPlan(opts);
   } finally {
     releaseStateLock(planningLock);
@@ -568,6 +570,7 @@ export async function uninstallMain(argv: string[] = process.argv): Promise<numb
 
   const mutationLock = acquireStateLock(stateHome);
   try {
+    assertNoOwnershipTransaction(stateHome);
     assertStateGeneration(stateHome, planned.generation);
     const current = loadUninstallPlan(opts);
     if (current.snapshot.text !== planned.snapshot.text) {
