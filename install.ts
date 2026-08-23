@@ -168,12 +168,26 @@ function takePlatforms(
   return { names, index: i };
 }
 
-function takeOptionValue(rest: string[], index: number, option: string): string {
+function takeOptionValue(
+  rest: string[],
+  index: number,
+  token: string,
+  option: string,
+): { value: string; index: number } {
+  const prefix = `${option}=`;
+  if (token.startsWith(prefix)) {
+    const value = token.slice(prefix.length);
+    if (!value) {
+      throw new Error(`${option} requires a value.`);
+    }
+    return { value, index };
+  }
+
   const value = rest[index + 1];
   if (!value || value.startsWith("-")) {
     throw new Error(`${option} requires a value.`);
   }
-  return value;
+  return { value, index: index + 1 };
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -199,12 +213,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const taken = takePlatforms(rest, i, token);
       out.platforms.push(...taken.names);
       i = taken.index;
-    } else if (token === "--scope") {
-      out.scope = takeOptionValue(rest, i, token);
-      i += 1;
-    } else if (token === "--target") {
-      out.target = takeOptionValue(rest, i, token);
-      i += 1;
+    } else if (token === "--scope" || token.startsWith("--scope=")) {
+      const taken = takeOptionValue(rest, i, token, "--scope");
+      out.scope = taken.value;
+      i = taken.index;
+    } else if (token === "--target" || token.startsWith("--target=")) {
+      const taken = takeOptionValue(rest, i, token, "--target");
+      out.target = taken.value;
+      i = taken.index;
     } else {
       throw new Error(`Unknown argument: ${token}`);
     }

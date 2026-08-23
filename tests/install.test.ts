@@ -174,6 +174,15 @@ test("parseArgs rejects missing scope and target values instead of consuming the
     () => parseArgs(["node", "install.ts", "--target", "--dry-run"]),
     /--target requires a value/,
   );
+
+  const explicitDashTarget = parseArgs([
+    "node",
+    "install.ts",
+    "--scope=project",
+    "--target=-repo",
+  ]);
+  assert.equal(explicitDashTarget.scope, "project");
+  assert.equal(explicitDashTarget.target, "-repo");
 });
 
 test("help names grok, codex, and copilot and does not say only grok is implemented", () => {
@@ -518,6 +527,24 @@ test("CLI project install requires an explicit target and leaves the working dir
       assert.match(missingValue.stderr, /--target requires a value/);
       assert.equal(existsSync(join(workingDirectory, "--dry-run")), false);
       assert.equal(existsSync(join(home, "installs.txt")), false);
+
+      const dashTarget = cli(
+        [
+          "--platform",
+          "codex",
+          "--scope=project",
+          "--target=-repo",
+          "--skip-deps",
+        ],
+        { RETEMPER_HOME: home },
+        workingDirectory,
+      );
+
+      assert.equal(dashTarget.status, 0, dashTarget.stderr);
+      assert.equal(
+        existsSync(join(workingDirectory, "-repo", ".agents", "skills", "retemper", "SKILL.md")),
+        true,
+      );
     } finally {
       rmSync(workingDirectory, { recursive: true, force: true });
     }
