@@ -41,10 +41,10 @@ const installPath = join(root, "install.ts");
 const skillSource = join(root, ".agents", "skills", "retemper", "SKILL.md");
 const installedSkillNames = ["retemper", "orchestrate", "grill-me", "grilling"];
 
-function cli(args: string[], env: NodeJS.ProcessEnv = {}) {
+function cli(args: string[], env: NodeJS.ProcessEnv = {}, cwd = root) {
   return spawnSync(process.execPath, [installPath, ...args], {
     encoding: "utf8" as const,
-    cwd: root,
+    cwd,
     env: { ...process.env, ...env },
   });
 }
@@ -182,6 +182,26 @@ test("parseArgs collects multiple platforms from spaces, commas, repeats, and --
     () => parseArgs(["node", "install.ts", "--platform=grok", "codex"]),
     /Unknown argument: codex/,
   );
+});
+
+test("parseArgs rejects missing scope and target values instead of consuming the next option", () => {
+  assert.throws(
+    () => parseArgs(["node", "install.ts", "--scope", "--dry-run"]),
+    /--scope requires a value/,
+  );
+  assert.throws(
+    () => parseArgs(["node", "install.ts", "--target", "--dry-run"]),
+    /--target requires a value/,
+  );
+
+  const explicitDashTarget = parseArgs([
+    "node",
+    "install.ts",
+    "--scope=project",
+    "--target=-repo",
+  ]);
+  assert.equal(explicitDashTarget.scope, "project");
+  assert.equal(explicitDashTarget.target, "-repo");
 });
 
 test("help names grok, codex, and copilot and does not say only grok is implemented", () => {
@@ -354,6 +374,13 @@ test("planInstall rejects unknown platforms", () => {
   assert.deepEqual(SKILL_PLATFORMS, ["codex", "copilot"]);
 });
 
+test("planInstall rejects a project scope without an explicit target", () => {
+  assert.throws(
+    () => planInstall({ platform: "codex", scope: "project" }),
+    /--target.*required/,
+  );
+});
+
 test("codex and copilot share one skill source and the same .agents/skills dests", () => {
   const target = "/does-not-exist/retemper-skill-proj";
   const codexUser = planInstall({ platform: "codex", scope: "user" });
@@ -482,6 +509,63 @@ test("CLI dry-run for Codex project prints dests and writes nothing", () => {
       assert.equal(existsSync(join(home, "installs.txt")), false);
     } finally {
       rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("CLI project install requires an explicit target and leaves the working directory untouched", () => {
+  const workingDirectory = mkdtempSync(join(tmpdir(), "retemper-no-target-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        ["--platform", "codex", "--scope", "project", "--skip-deps"],
+        { RETEMPER_HOME: home },
+        workingDirectory,
+      );
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /--target/);
+      assert.equal(existsSync(join(workingDirectory, ".agents")), false);
+      assert.equal(existsSync(join(home, "installs.txt")), false);
+
+      const missingValue = cli(
+        [
+          "--platform",
+          "codex",
+          "--scope",
+          "project",
+          "--target",
+          "--dry-run",
+          "--skip-deps",
+        ],
+        { RETEMPER_HOME: home },
+        workingDirectory,
+      );
+
+      assert.notEqual(missingValue.status, 0);
+      assert.match(missingValue.stderr, /--target requires a value/);
+      assert.equal(existsSync(join(workingDirectory, "--dry-run")), false);
+      assert.equal(existsSync(join(home, "installs.txt")), false);
+
+      const dashTarget = cli(
+        [
+          "--platform",
+          "codex",
+          "--scope=project",
+          "--target=-repo",
+          "--skip-deps",
+        ],
+        { RETEMPER_HOME: home },
+        workingDirectory,
+      );
+
+      assert.equal(dashTarget.status, 0, dashTarget.stderr);
+      assert.equal(
+        existsSync(join(workingDirectory, "-repo", ".agents", "skills", "retemper", "SKILL.md")),
+        true,
+      );
+    } finally {
+      rmSync(workingDirectory, { recursive: true, force: true });
     }
   });
 });
