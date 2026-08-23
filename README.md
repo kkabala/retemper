@@ -39,6 +39,56 @@ npm run install:user:cursor
 npm run install:user:cursor:dry
 ```
 
+## Uninstall
+
+```bash
+node uninstall.ts                       # --all by default: every recorded install
+node uninstall.ts --dry-run             # list paths, remove nothing, never prompts
+node uninstall.ts --platform grok --scope user
+node uninstall.ts --platform codex --scope project --target /path/to/repo
+node uninstall.ts --all --yes           # skip the y/N prompt (CI)
+```
+
+Uninstall accepts the same `--platform` / `--scope` / `--target` grammar as the
+installer. With no filters it behaves as `--all`: every install recorded in
+`~/.retemper/installs.txt` (`$RETEMPER_HOME/installs.txt`) is removed and the
+matching records are dropped.
+
+Every planned path is printed first, marked `[present]` or `[missing]`; nothing
+is deleted before you answer **y/yes** at the prompt. Anything else — including
+EOF — aborts with no changes. `--yes` skips the prompt; `--dry-run` never prompts.
+
+Notes:
+
+- `CODING_STANDARDS.md` is never removed.
+- `grill-me`, `grilling`, and `orchestrate`, installed alongside retemper, are
+  removed with it — including `$CODEX_HOME/skills` symlinks for user scope.
+- Empty folders left behind are pruned; install roots themselves stay.
+- Uninstalled records disappear from `installs.txt`; the file is deleted when
+  the last record goes.
+
+## Single entry point
+
+One command exposes both directions, matching common npx CLI conventions
+(`install` / `uninstall` verbs over a single binary):
+
+```bash
+node retemper.ts install --platform grok --scope user
+node retemper.ts uninstall --all
+node retemper.ts update --dry-run
+node retemper.ts help
+```
+
+When packaged for npx, this becomes `npx retemper install|uninstall|update`;
+the dedicated `retemper-install` / `retemper-uninstall` bins stay available.
+
+npm shortcuts:
+
+```bash
+npm run uninstall:all        # interactive --all
+npm run uninstall:all:dry
+```
+
 ## Tests
 
 ```bash

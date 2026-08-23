@@ -6,7 +6,9 @@
   "type": "module",
   "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build, Codex, GitHub Copilot, and Cursor.",
   "bin": {
-    "retemper-install": "./install.ts"
+    "retemper": "./retemper.ts",
+    "retemper-install": "./install.ts",
+    "retemper-uninstall": "./uninstall.ts"
   },
   "scripts": {
     "test": "node --test tests/*.test.ts",
@@ -18,6 +20,8 @@
     "install:user:copilot:dry": "node install.ts --dry-run --platform copilot --scope user",
     "install:user:cursor": "node install.ts --platform cursor --scope user",
     "install:user:cursor:dry": "node install.ts --dry-run --platform cursor --scope user",
+    "uninstall:all": "node uninstall.ts --all",
+    "uninstall:all:dry": "node uninstall.ts --all --dry-run",
     "update": "node install.ts --update",
     "update:dry": "node install.ts --update --dry-run"
   }
