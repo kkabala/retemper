@@ -31,9 +31,9 @@ not a verdict.
 **Invocation:** If this session can run /workflow retemper (Grok Build,
 workflow installed): **launch that with the same task/flags and stop.** Do
 not simulate phases in chat. If this is Grok but the workflow is not
-available: say so; skill-path is the fallback. Codex / Copilot: skill-path
-(`$retemper`, `/retemper`, or `/skills` → retemper). Do not tell the user
-to launch or resume a `/workflow`.
+available: say so; skill-path is the fallback. Codex / Copilot / Cursor:
+skill-path (`$retemper`, `/retemper`, or `/skills` → retemper). Do not tell
+the user to launch or resume a `/workflow`.
 
 A new user message **while this run is open** is input to this run (fold
 it in). Do not declare a one-off. Do not start a second Planning. A new
@@ -100,8 +100,8 @@ unusable — fail closed.
    scope). The architect proposes grill questions in its payload. You
    synthesize and ask (Matt Pocock **grill-me** / grilling if those skills
    are installed: `$grill-me` / `$grilling` on Codex, `/grill-me` /
-   `/grilling` on Copilot). Decisions belong to the user; facts belong to
-   you. If grill is off, do not interview.
+   `/grilling` on Copilot or Cursor). Decisions belong to the user; facts
+   belong to you. If grill is off, do not interview.
 2. **Acceptance tests** — `references/qa-acceptance.md` — compute band **standard**.
    User-facing end-to-end definition of done. Do not implement the feature.
    One acceptance author unless that work itself partitions.
@@ -184,8 +184,9 @@ resume command.
 
 Set `needs_user` only when pipeline.md says to (no pipeline, wait failed or
 timed out, or merge needs a human). Then **stop**. Tell the human to continue /
-re-invoke `$retemper` (Codex), `/retemper` (Copilot), or `/skills` → retemper
-after CI finishes, then **re-check the real status**.
+re-invoke `$retemper` (Codex), `/retemper` (Copilot / Cursor), or select
+retemper from the harness skill picker after CI finishes, then **re-check the
+real status**.
 
 When they continue after a CI stop, resume at **Pipeline monitoring**. Re-check
 once. Then merge or return to Development.

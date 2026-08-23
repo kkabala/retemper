@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build, Codex, and GitHub Copilot.",
+  "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build, Codex, GitHub Copilot, and Cursor.",
   "bin": {
     "retemper-install": "./install.ts"
   },
@@ -16,6 +16,8 @@
     "install:user:codex:dry": "node install.ts --dry-run --platform codex --scope user",
     "install:user:copilot": "node install.ts --platform copilot --scope user",
     "install:user:copilot:dry": "node install.ts --dry-run --platform copilot --scope user",
+    "install:user:cursor": "node install.ts --platform cursor --scope user",
+    "install:user:cursor:dry": "node install.ts --dry-run --platform cursor --scope user",
     "update": "node install.ts --update",
     "update:dry": "node install.ts --update --dry-run"
   }

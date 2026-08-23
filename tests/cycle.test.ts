@@ -271,7 +271,7 @@ test("role references stay stack-agnostic and match the named sources", () => {
   assert.match(architect, /answering frontier questions is not/);
 });
 
-test("Grok workflow and the shared Codex/Copilot skill both wait on real CI before needs_user", () => {
+test("Grok workflow and the shared Codex/Copilot/Cursor skill wait on real CI", () => {
   const rhai = readFileSync(rhaiPath, "utf8");
   const skill = readFileSync(skillPath, "utf8");
 
@@ -286,6 +286,7 @@ test("Grok workflow and the shared Codex/Copilot skill both wait on real CI befo
   assert.match(skill, /Follow `references\/pipeline\.md`/);
   assert.match(skill, /\/retemper/);
   assert.match(skill, /Copilot/);
+  assert.match(skill, /Cursor/);
   assert.doesNotMatch(skill, /Never busy-loop/);
   assert.doesNotMatch(skill, /\/workflow resume retemper/);
 });

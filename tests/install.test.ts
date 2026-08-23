@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -66,7 +68,7 @@ function assertRealSkillDirectories(home: string): void {
   }
 }
 
-test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
+test("parseArgs accepts the same flags for every supported platform", () => {
   const grok = parseArgs([
     "node",
     "install.ts",
@@ -121,6 +123,20 @@ test("parseArgs accepts the same flags for grok, codex, and copilot", () => {
   assert.deepEqual(copilot.platforms, ["copilot"]);
   assert.equal(copilot.scope, "user");
   assert.equal(copilot.dryRun, true);
+
+  const cursor = parseArgs([
+    "node",
+    "install.ts",
+    "--platform",
+    "cursor",
+    "--scope",
+    "project",
+    "--target",
+    "/repo",
+  ]);
+  assert.deepEqual(cursor.platforms, ["cursor"]);
+  assert.equal(cursor.scope, "project");
+  assert.equal(cursor.target, "/repo");
 });
 
 test("parseArgs collects multiple platforms from spaces, commas, repeats, and --platform=", () => {
@@ -204,11 +220,12 @@ test("parseArgs rejects missing scope and target values instead of consuming the
   assert.equal(explicitDashTarget.target, "-repo");
 });
 
-test("help names grok, codex, and copilot and does not say only grok is implemented", () => {
+test("help names every supported platform and does not say only grok is implemented", () => {
   const text = helpText();
   assert.match(text, /\bgrok\b/);
   assert.match(text, /\bcodex\b/);
   assert.match(text, /\bcopilot\b/);
+  assert.match(text, /\bcursor\b/);
   assert.match(text, /\$retemper/);
   assert.match(text, /\/retemper/);
   assert.match(text, /\/skills/);
@@ -296,6 +313,27 @@ test("planInstall routes Codex user and project dests under .agents/skills", () 
   assert.deepEqual(project.skillLinks, []);
 });
 
+test("planInstall routes Cursor through the shared .agents/skills payload", () => {
+  const target = "/does-not-exist/retemper-cursor-proj";
+  const codex = planInstall({ platform: "codex", scope: "project", target });
+  const cursorUser = planInstall({ platform: "cursor", scope: "user" });
+  const cursorProject = planInstall({ platform: "cursor", scope: "project", target });
+
+  assert.equal(cursorUser.skillSrc, codex.skillSrc);
+  assert.equal(cursorUser.skillDest, join(agentsHome(), "skills", "retemper"));
+  assert.equal(cursorProject.skillDest, codex.skillDest);
+  assert.equal(cursorProject.refsDest, codex.refsDest);
+  assert.deepEqual(cursorProject.skillDests, codex.skillDests);
+  assert.equal(cursorProject.workflowDest, null);
+  assert.doesNotMatch(cursorUser.skillDest, /\.cursor[/\\]skills/);
+  assert.doesNotMatch(cursorProject.skillDest, /\.cursor[/\\]skills/);
+  assert.deepEqual(cursorUser.skillLinks, []);
+  assert.deepEqual(cursorProject.skillLinks, []);
+  for (const argv of [...cursorUser.fetchCommands, ...cursorProject.fetchCommands]) {
+    assert.equal(fetchAgent(argv), "cline");
+  }
+});
+
 test("grill fetch targets productivity skill folders, not the whole mattpocock catalog", () => {
   const grokUser = planInstall({ platform: "grok", scope: "user" });
   const grokProject = planInstall({
@@ -309,8 +347,13 @@ test("grill fetch targets productivity skill folders, not the whole mattpocock c
     scope: "project",
     target: "/does-not-exist/retemper-skill-proj",
   });
+  const cursorProject = planInstall({
+    platform: "cursor",
+    scope: "project",
+    target: "/does-not-exist/retemper-skill-proj",
+  });
 
-  for (const plan of [grokUser, grokProject, codexUser, copilotProject]) {
+  for (const plan of [grokUser, grokProject, codexUser, copilotProject, cursorProject]) {
     const sources = plan.fetchCommands.map((argv) => argv.find((token) => String(token).startsWith("mattpocock/")));
     assert.deepEqual(sources, [
       "mattpocock/skills/skills/productivity/grill-me",
@@ -352,6 +395,12 @@ test("grill fetch --agent follows the selected platform dest", () => {
     scope: "project",
     target: "/does-not-exist/retemper-skill-proj",
   });
+  const cursorUser = planInstall({ platform: "cursor", scope: "user" });
+  const cursorProject = planInstall({
+    platform: "cursor",
+    scope: "project",
+    target: "/does-not-exist/retemper-skill-proj",
+  });
 
   for (const argv of [...grokUser.fetchCommands, ...grokProject.fetchCommands]) {
     assert.equal(fetchAgent(argv), "grok");
@@ -360,18 +409,21 @@ test("grill fetch --agent follows the selected platform dest", () => {
     ...codexUser.fetchCommands,
     ...copilotUser.fetchCommands,
     ...copilotProject.fetchCommands,
+    ...cursorUser.fetchCommands,
+    ...cursorProject.fetchCommands,
   ]) {
     assert.equal(fetchAgent(argv), "cline");
   }
 
   assert.match(describe(grokUser, { dryRun: true, skipDeps: false }), /--agent grok/);
   assert.match(describe(codexUser, { dryRun: true, skipDeps: false }), /--agent cline/);
+  assert.match(describe(cursorUser, { dryRun: true, skipDeps: false }), /--agent cline/);
 });
 
 test("planInstall rejects unknown platforms", () => {
-  assert.throws(() => planInstall({ platform: "claude", scope: "user" }), /copilot/);
-  assert.deepEqual(SUPPORTED_PLATFORMS, ["grok", "codex", "copilot"]);
-  assert.deepEqual(SKILL_PLATFORMS, ["codex", "copilot"]);
+  assert.throws(() => planInstall({ platform: "claude", scope: "user" }), /cursor/);
+  assert.deepEqual(SUPPORTED_PLATFORMS, ["grok", "codex", "copilot", "cursor"]);
+  assert.deepEqual(SKILL_PLATFORMS, ["codex", "copilot", "cursor"]);
 });
 
 test("planInstall rejects a project scope without an explicit target", () => {
@@ -381,27 +433,36 @@ test("planInstall rejects a project scope without an explicit target", () => {
   );
 });
 
-test("codex and copilot share one skill source and the same .agents/skills dests", () => {
+test("codex, copilot, and cursor share one skill source and .agents/skills dests", () => {
   const target = "/does-not-exist/retemper-skill-proj";
   const codexUser = planInstall({ platform: "codex", scope: "user" });
   const copilotUser = planInstall({ platform: "copilot", scope: "user" });
+  const cursorUser = planInstall({ platform: "cursor", scope: "user" });
   const codexProject = planInstall({ platform: "codex", scope: "project", target });
   const copilotProject = planInstall({ platform: "copilot", scope: "project", target });
+  const cursorProject = planInstall({ platform: "cursor", scope: "project", target });
 
   assert.equal(codexUser.skillSrc, copilotUser.skillSrc);
+  assert.equal(codexUser.skillSrc, cursorUser.skillSrc);
   assert.equal(codexUser.skillSrc, join(root, ".agents", "skills", "retemper"));
   assert.equal(codexUser.skillDest, copilotUser.skillDest);
+  assert.equal(codexUser.skillDest, cursorUser.skillDest);
   assert.equal(codexUser.refsDest, copilotUser.refsDest);
   assert.deepEqual(codexUser.skillDests, copilotUser.skillDests);
   assert.equal(codexProject.skillDest, copilotProject.skillDest);
+  assert.equal(codexProject.skillDest, cursorProject.skillDest);
   assert.equal(codexProject.refsDest, copilotProject.refsDest);
   assert.notEqual(codexUser.platform, copilotUser.platform);
+  assert.notEqual(codexUser.skillLinks.length, 0);
+  assert.deepEqual(copilotUser.skillLinks, []);
+  assert.deepEqual(cursorUser.skillLinks, []);
 
-  for (const plan of [copilotUser, copilotProject]) {
+  for (const plan of [copilotUser, copilotProject, cursorUser, cursorProject]) {
     assert.equal(plan.workflowDest, null);
     assert.ok(plan.skillDest.includes(join(".agents", "skills")));
     assert.doesNotMatch(plan.skillDest, /\.github[/\\]skills/);
     assert.doesNotMatch(plan.skillDest, /\.copilot[/\\]/);
+    assert.doesNotMatch(plan.skillDest, /\.cursor[/\\]/);
     assert.doesNotMatch(plan.skillSrc, /\.github[/\\]/);
   }
 });
@@ -410,9 +471,10 @@ test("the repo ships one retemper SKILL.md, under .agents/skills", () => {
   assert.equal(existsSync(skillSource), true);
   assert.equal(existsSync(join(root, ".github", "skills", "retemper", "SKILL.md")), false);
   assert.equal(existsSync(join(root, ".copilot", "skills", "retemper", "SKILL.md")), false);
+  assert.equal(existsSync(join(root, ".cursor", "skills", "retemper", "SKILL.md")), false);
 });
 
-test("grok, Codex, and Copilot plans share one platform-neutral refsSrc", () => {
+test("all platform plans share one platform-neutral refsSrc", () => {
   const grok = planInstall({ platform: "grok", scope: "user" });
   const codexUser = planInstall({ platform: "codex", scope: "user" });
   const copilotUser = planInstall({ platform: "copilot", scope: "user" });
@@ -421,9 +483,15 @@ test("grok, Codex, and Copilot plans share one platform-neutral refsSrc", () => 
     scope: "project",
     target: "/does-not-exist/retemper-copilot-proj",
   });
+  const cursorProject = planInstall({
+    platform: "cursor",
+    scope: "project",
+    target: "/does-not-exist/retemper-cursor-proj",
+  });
   assert.equal(grok.refsSrc, codexUser.refsSrc);
   assert.equal(grok.refsSrc, copilotUser.refsSrc);
   assert.equal(grok.refsSrc, copilotProject.refsSrc);
+  assert.equal(grok.refsSrc, cursorProject.refsSrc);
   assert.equal(grok.refsSrc, join(root, "references"));
   assert.doesNotMatch(grok.refsSrc, /\.grok[/\\]/);
   assert.equal(existsSync(join(grok.refsSrc, "architect.md")), true);
@@ -464,6 +532,7 @@ test("shipped skill states the cycle rules from PHASES and launch flags", () => 
   assert.match(body, /\$retemper/);
   assert.match(body, /\/retemper/);
   assert.match(body, /Copilot/);
+  assert.match(body, /Cursor/);
   assert.match(body, /\/skills/);
   assert.doesNotMatch(body, /\/workflow resume retemper/);
 });
@@ -477,7 +546,7 @@ test("describe(grok) names the workflow and orchestrate skill", () => {
   assert.match(plan.orchestrateDest, /[/\\]\.grok[/\\]skills[/\\]orchestrate$/);
 });
 
-test("describe(codex|copilot) names .agents/skills and does not use a .rhai payload", () => {
+test("describe(skill platform) names shared skills and only Codex compatibility links", () => {
   for (const platform of SKILL_PLATFORMS) {
     const plan = planInstall({ platform, scope: "user" });
     const text = describe(plan, { dryRun: true, skipDeps: false });
@@ -487,10 +556,12 @@ test("describe(codex|copilot) names .agents/skills and does not use a .rhai payl
     assert.match(text, /orchestrate:/);
     assert.match(text, /grill-me/);
     assert.match(text, /grilling/);
-    assert.match(text, /codex skill link:/);
+    if (platform === "codex") assert.match(text, /codex skill link:/);
+    else assert.doesNotMatch(text, /codex skill link:/);
     assert.doesNotMatch(text, /\.rhai/);
     assert.doesNotMatch(text, /\.github[/\\]skills/);
     assert.doesNotMatch(text, /\.copilot[/\\]skills/);
+    assert.doesNotMatch(text, /\.cursor[/\\]skills/);
   }
 });
 
@@ -692,6 +763,130 @@ test("CLI --skip-deps Copilot project install writes the shared .agents/skills t
   });
 });
 
+test("acceptance: Cursor project install writes the complete shared skill tree", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-cursor-"));
+  withHome((home) => {
+    try {
+      const result = cli(
+        [
+          "--platform",
+          "cursor",
+          "--scope",
+          "project",
+          "--target",
+          target,
+          "--skip-deps",
+        ],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /platform=cursor/);
+      assert.match(result.stdout, /installed retemper/);
+
+      const skills = join(target, ".agents", "skills");
+      assert.equal(existsSync(join(skills, "retemper", "SKILL.md")), true);
+      assert.equal(existsSync(join(skills, "retemper", "references", "architect.md")), true);
+      assert.equal(existsSync(join(skills, "orchestrate", "SKILL.md")), true);
+      assert.equal(existsSync(join(skills, "grill-me", "SKILL.md")), true);
+      assert.equal(existsSync(join(skills, "grilling", "SKILL.md")), true);
+      assert.equal(existsSync(join(target, ".cursor")), false);
+      assert.equal(
+        readFileSync(join(home, "installs.txt"), "utf8").trim(),
+        `cursor project ${target}`,
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("acceptance: Cursor user install and update leave Codex skills untouched", () => {
+  const agents = mkdtempSync(join(tmpdir(), "retemper-cursor-agents-"));
+  const codex = mkdtempSync(join(tmpdir(), "retemper-cursor-codex-"));
+  withHome((home) => {
+    const marker = join(codex, "skills", "retemper", "codex-owned.txt");
+    try {
+      mkdirSync(dirname(marker), { recursive: true });
+      writeFileSync(marker, "keep me\n");
+      const env = { RETEMPER_HOME: home, AGENTS_HOME: agents, CODEX_HOME: codex };
+
+      const installed = cli(
+        ["--platform", "cursor", "--scope", "user", "--skip-deps"],
+        env,
+      );
+      assert.equal(installed.status, 0, installed.stderr);
+      const skillMd = join(agents, "skills", "retemper", "SKILL.md");
+      rmSync(skillMd);
+
+      const updated = cli(["--update", "--skip-deps"], env);
+      assert.equal(updated.status, 0, updated.stderr);
+      assert.equal(existsSync(skillMd), true);
+      assert.equal(readFileSync(marker, "utf8"), "keep me\n");
+      assert.equal(lstatSync(dirname(marker)).isDirectory(), true);
+      assert.equal(existsSync(join(codex, "skills", "orchestrate")), false);
+      assert.equal(existsSync(join(codex, "skills", "grill-me")), false);
+      assert.equal(existsSync(join(codex, "skills", "grilling")), false);
+    } finally {
+      rmSync(agents, { recursive: true, force: true });
+      rmSync(codex, { recursive: true, force: true });
+    }
+  });
+});
+
+test("acceptance: Cursor project install and update refresh dependencies in the target", () => {
+  const caller = mkdtempSync(join(tmpdir(), "retemper-cursor-caller-"));
+  const target = mkdtempSync(join(tmpdir(), "retemper-cursor-target-"));
+  const fakeBin = mkdtempSync(join(tmpdir(), "retemper-fake-bin-"));
+  withHome((home) => {
+    const fakeNpx = join(fakeBin, "npx");
+    const log = join(home, "npx-cwds.txt");
+    try {
+      writeFileSync(
+        fakeNpx,
+        [
+          "#!/bin/sh",
+          'printf "%s\\n" "$PWD" >> "$RETEMPER_FAKE_NPX_LOG"',
+          'mkdir -p "$PWD/.agents/skills/dependency-refresh"',
+          'printf "dependency refresh\\n" > "$PWD/.agents/skills/dependency-refresh/SKILL.md"',
+          "",
+        ].join("\n"),
+      );
+      chmodSync(fakeNpx, 0o755);
+      const env = {
+        RETEMPER_HOME: home,
+        RETEMPER_FAKE_NPX_LOG: log,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      };
+
+      const installed = cli(
+        ["--platform", "cursor", "--scope", "project", "--target", target],
+        env,
+        caller,
+      );
+      assert.equal(installed.status, 0, installed.stderr);
+
+      const updated = cli(["--update"], env, caller);
+      assert.equal(updated.status, 0, updated.stderr);
+      const targetCwd = realpathSync(target);
+      assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
+        targetCwd,
+        targetCwd,
+        targetCwd,
+        targetCwd,
+      ]);
+      assert.equal(
+        existsSync(join(target, ".agents", "skills", "dependency-refresh", "SKILL.md")),
+        true,
+      );
+      assert.equal(existsSync(join(caller, ".agents")), false);
+    } finally {
+      rmSync(caller, { recursive: true, force: true });
+      rmSync(target, { recursive: true, force: true });
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+});
+
 test("CLI dry-run for Copilot project prints dests and writes nothing", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-copilot-dry-"));
   withHome((home) => {
@@ -728,14 +923,16 @@ test("parseInstalls skips comments and blanks and keeps paths with spaces", () =
       "",
       "grok user /Users/you/.grok",
       "codex project /tmp/my repo",
+      "cursor user /Users/you/.agents",
       "not-a-platform user /tmp/x",
       "grok nope /tmp/x",
     ].join("\n"),
   );
   assert.deepEqual(parsed[0], { platform: "grok", scope: "user", path: "/Users/you/.grok" });
   assert.deepEqual(parsed[1], { platform: "codex", scope: "project", path: "/tmp/my repo" });
-  assert.equal(parsed[2].invalid, true);
+  assert.deepEqual(parsed[2], { platform: "cursor", scope: "user", path: "/Users/you/.agents" });
   assert.equal(parsed[3].invalid, true);
+  assert.equal(parsed[4].invalid, true);
   assert.equal(formatInstalls(parsed).includes("codex project /tmp/my repo"), true);
 });
 
@@ -780,6 +977,7 @@ test("missingInstallsMessage names the file and asks for --platform and --scope"
   assert.match(text, /--platform/);
   assert.match(text, /--scope/);
   assert.match(text, /--target/);
+  assert.match(text, /cursor/);
 });
 
 test("CLI --update with no tracking file tells the user to install and writes nothing", () => {
@@ -799,12 +997,12 @@ test("CLI --update with no tracking file tells the user to install and writes no
   });
 });
 
-test("CLI --update restores a deleted project payload from the tracking file", () => {
+test("CLI --update restores a deleted Cursor project payload from the tracking file", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-upd-"));
   withHome((home) => {
     try {
       const installed = cli(
-        ["--platform", "codex", "--scope", "project", "--target", target, "--skip-deps"],
+        ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
         { RETEMPER_HOME: home },
       );
       assert.equal(installed.status, 0, installed.stderr);
@@ -814,9 +1012,9 @@ test("CLI --update restores a deleted project payload from the tracking file", (
 
       const updated = cli(["--update", "--skip-deps"], { RETEMPER_HOME: home });
       assert.equal(updated.status, 0, updated.stderr);
-      assert.match(updated.stdout, /platform=codex/);
+      assert.match(updated.stdout, /platform=cursor/);
       assert.equal(existsSync(skillMd), true);
-      assert.equal(readFileSync(join(home, "installs.txt"), "utf8").trim(), `codex project ${target}`);
+      assert.equal(readFileSync(join(home, "installs.txt"), "utf8").trim(), `cursor project ${target}`);
     } finally {
       rmSync(target, { recursive: true, force: true });
     }
@@ -1154,19 +1352,23 @@ test("CLI --platform grok claude rejects the unknown name and writes nothing", (
   });
 });
 
-test("CLI --platform grok,codex --scope user writes grok and skill dests under test homes", () => {
+test("CLI multi-platform user install writes Grok and shared Cursor skill dests", () => {
   const grok = mkdtempSync(join(tmpdir(), "retemper-user-grok-"));
   const agents = mkdtempSync(join(tmpdir(), "retemper-user-agents-"));
   const codex = mkdtempSync(join(tmpdir(), "retemper-user-codex-"));
   withHome((home) => {
     try {
-      const result = cli(["--platform", "grok", "codex", "--scope", "user", "--skip-deps"], {
-        RETEMPER_HOME: home,
-        GROK_HOME: grok,
-        AGENTS_HOME: agents,
-        CODEX_HOME: codex,
-      });
+      const result = cli(
+        ["--platform", "grok", "codex", "cursor", "--scope", "user", "--skip-deps"],
+        {
+          RETEMPER_HOME: home,
+          GROK_HOME: grok,
+          AGENTS_HOME: agents,
+          CODEX_HOME: codex,
+        },
+      );
       assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /platform=cursor/);
       assert.equal(existsSync(join(grok, "workflows", "retemper.rhai")), true);
       assert.equal(existsSync(join(agents, "skills", "retemper", "SKILL.md")), true);
       for (const name of ["retemper", "orchestrate", "grill-me", "grilling"]) {
@@ -1178,6 +1380,7 @@ test("CLI --platform grok,codex --scope user writes grok and skill dests under t
       assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
         `grok user ${grok}`,
         `codex user ${agents}`,
+        `cursor user ${agents}`,
       ]);
     } finally {
       rmSync(grok, { recursive: true, force: true });
@@ -1338,12 +1541,22 @@ test("CLI --platform grok,codex,grok records each platform once", () => {
   });
 });
 
-test("CLI --platform codex copilot records two skill lines on the same dest tree", () => {
+test("CLI --platform codex copilot cursor records three skill lines on one dest tree", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-skills-"));
   withHome((home) => {
     try {
       const result = cli(
-        ["--platform", "codex", "copilot", "--scope", "project", "--target", target, "--skip-deps"],
+        [
+          "--platform",
+          "codex",
+          "copilot",
+          "cursor",
+          "--scope",
+          "project",
+          "--target",
+          target,
+          "--skip-deps",
+        ],
         { RETEMPER_HOME: home },
       );
       assert.equal(result.status, 0, result.stderr);
@@ -1351,6 +1564,7 @@ test("CLI --platform codex copilot records two skill lines on the same dest tree
       assert.deepEqual(readFileSync(join(home, "installs.txt"), "utf8").trim().split("\n"), [
         `codex project ${target}`,
         `copilot project ${target}`,
+        `cursor project ${target}`,
       ]);
     } finally {
       rmSync(target, { recursive: true, force: true });
