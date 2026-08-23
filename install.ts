@@ -168,6 +168,14 @@ function takePlatforms(
   return { names, index: i };
 }
 
+function takeOptionValue(rest: string[], index: number, option: string): string {
+  const value = rest[index + 1];
+  if (!value || value.startsWith("-")) {
+    throw new Error(`${option} requires a value.`);
+  }
+  return value;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const out: ParsedArgs = {
     help: false,
@@ -191,9 +199,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const taken = takePlatforms(rest, i, token);
       out.platforms.push(...taken.names);
       i = taken.index;
-    } else if (token === "--scope") out.scope = String(rest[++i] || "");
-    else if (token === "--target") out.target = String(rest[++i] || "");
-    else throw new Error(`Unknown argument: ${token}`);
+    } else if (token === "--scope") {
+      out.scope = takeOptionValue(rest, i, token);
+      i += 1;
+    } else if (token === "--target") {
+      out.target = takeOptionValue(rest, i, token);
+      i += 1;
+    } else {
+      throw new Error(`Unknown argument: ${token}`);
+    }
   }
   out.platforms = uniqueNames(out.platforms);
   return out;
@@ -425,7 +439,7 @@ function planGrok(opts: ParsedArgs & { platform: string }, sources: SharedSource
     );
   }
 
-  const target = resolve(opts.target || process.cwd());
+  const target = resolve(opts.target);
   return withOrchestrate(
     {
       platform,
@@ -481,7 +495,7 @@ function planSkillPlatform(platform: string, opts: ParsedArgs, sources: SharedSo
     );
   }
 
-  const target = resolve(opts.target || process.cwd());
+  const target = resolve(opts.target);
   const skillDest = join(target, ".agents", "skills", NAME);
   return withOrchestrate(
     {
@@ -531,6 +545,9 @@ export function planInstall(opts: { platform: string; scope: string; target?: st
   }
   if (!SUPPORTED_SCOPES.includes(opts.scope)) {
     throw new Error(`Unsupported scope "${opts.scope || "(missing)"}". Pick scope=user or scope=project.`);
+  }
+  if (opts.scope === "project" && (!opts.target || opts.target.trim() === "")) {
+    throw new Error("--target <dir> is required for project scope.");
   }
 
   const sources = sharedSources();
