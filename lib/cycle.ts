@@ -101,8 +101,14 @@ export type CycleResult = {
 
 export type Decide = (phase: string, cycle: number) => CycleVerdict | unknown;
 
+const VISIBLE_EVIDENCE = /[^\p{White_Space}\p{Cf}\p{Cc}]/u;
+
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function hasUsableEvidence(value: unknown): boolean {
+  return typeof value === "string" && VISIBLE_EVIDENCE.test(value);
 }
 
 function isFalse(value: unknown): boolean {
@@ -234,18 +240,18 @@ export function planningGateError(args: LaunchInput): string | null {
 }
 
 /**
- * Fail closed: a missing/unusable verdict is a return.
- * A return_to_dev claim without evidence is not a return.
+ * Fail closed: a missing verdict, a non-boolean decision, or blank evidence
+ * returns the cycle to Development.
  */
 export function shouldReturnToDevelopment(verdict: unknown): boolean {
-  if (verdict == null || typeof verdict !== "object") {
+  if (verdict == null || typeof verdict !== "object" || Array.isArray(verdict)) {
     return true;
   }
   const bag = verdict as CycleVerdict;
-  if (!bag || bag.return_to_dev !== true) {
-    return false;
+  if (typeof bag?.return_to_dev !== "boolean" || !hasUsableEvidence(bag.evidence)) {
+    return true;
   }
-  return text(bag.evidence) !== "";
+  return bag.return_to_dev;
 }
 
 export function replayFromDevelopment(walk: string[]): string[] {

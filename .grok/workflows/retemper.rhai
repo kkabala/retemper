@@ -62,6 +62,48 @@ fn trimmed(s) {
 
 fn is_map(x) { type_of(x) == "map" }
 
+fn in_code_point_range(code, first, last) {
+    code >= first && code <= last
+}
+
+// Rhai has no Unicode category predicate; keep this aligned with White_Space, Cf, and Cc.
+fn is_invisible_evidence_code_point(code) {
+    code <= 0x20
+        || in_code_point_range(code, 0x7f, 0xa0)
+        || code == 0x1680
+        || in_code_point_range(code, 0x2000, 0x200f)
+        || in_code_point_range(code, 0x2028, 0x202f)
+        || code == 0x205f
+        || code == 0x3000
+        || code == 0xad
+        || in_code_point_range(code, 0x600, 0x605)
+        || code == 0x61c
+        || code == 0x6dd
+        || code == 0x70f
+        || in_code_point_range(code, 0x890, 0x891)
+        || code == 0x8e2
+        || code == 0x180e
+        || in_code_point_range(code, 0x2060, 0x2064)
+        || in_code_point_range(code, 0x2066, 0x206f)
+        || code == 0xfeff
+        || in_code_point_range(code, 0xfff9, 0xfffb)
+        || code == 0x110bd
+        || code == 0x110cd
+        || in_code_point_range(code, 0x13430, 0x1343f)
+        || in_code_point_range(code, 0x1bca0, 0x1bca3)
+        || in_code_point_range(code, 0x1d173, 0x1d17a)
+        || code == 0xe0001
+        || in_code_point_range(code, 0xe0020, 0xe007f)
+}
+
+fn has_usable_evidence(value) {
+    if type_of(value) != "string" { return false; }
+    for ch in value {
+        if !is_invisible_evidence_code_point(ch.to_int()) { return true; }
+    }
+    false
+}
+
 fn contains_text(hay, needle) {
     if type_of(hay) != "string" || type_of(needle) != "string" { return false; }
     if needle.len() == 0 { return true; }
@@ -187,8 +229,9 @@ fn skip_planning(bag) {
 fn should_return(res) {
     if res == () || !res.success { return true; }
     if !is_map(res.output) { return true; }
-    if res.output.return_to_dev != true { return false; }
-    trimmed(res.output.evidence) != ""
+    if res.output.return_to_dev != true && res.output.return_to_dev != false { return true; }
+    if !has_usable_evidence(res.output.evidence) { return true; }
+    res.output.return_to_dev == true
 }
 
 fn needs_human(res) {
@@ -262,7 +305,9 @@ fn take_summary(res) {
 
 fn unusable_verdict(res, label) {
     if res != () && is_map(res.output) {
-        return trimmed(res.output.reason) + " " + trimmed(res.output.evidence);
+        let detail = trimmed(res.output.reason) + " " + trimmed(res.output.evidence);
+        detail.trim();
+        if detail != "" { return detail; }
     }
     label + " returned no usable verdict"
 }
