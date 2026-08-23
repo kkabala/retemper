@@ -157,7 +157,7 @@ Record a verdict object:
 ```
 
 Fail closed: a missing or unusable verdict is a return to **Development**.
-A `return_to_dev: true` claim with empty evidence is **not** a return.
+A verdict with empty evidence is unusable and fails closed to **Development**.
 
 On a real return: go back to **Development** and replay every later hardening
 phase in order with **no-skip replay**. Do not re-run Planning or

@@ -187,8 +187,9 @@ fn skip_planning(bag) {
 fn should_return(res) {
     if res == () || !res.success { return true; }
     if !is_map(res.output) { return true; }
-    if res.output.return_to_dev != true { return false; }
-    trimmed(res.output.evidence) != ""
+    if res.output.return_to_dev != true && res.output.return_to_dev != false { return true; }
+    if trimmed(res.output.evidence) == "" { return true; }
+    res.output.return_to_dev == true
 }
 
 fn needs_human(res) {
@@ -262,7 +263,9 @@ fn take_summary(res) {
 
 fn unusable_verdict(res, label) {
     if res != () && is_map(res.output) {
-        return trimmed(res.output.reason) + " " + trimmed(res.output.evidence);
+        let detail = trimmed(res.output.reason) + " " + trimmed(res.output.evidence);
+        detail.trim();
+        if detail != "" { return detail; }
     }
     label + " returned no usable verdict"
 }

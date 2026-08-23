@@ -66,11 +66,14 @@ test("planningGateError requires a task; no_plan still needs a brief", () => {
   assert.equal(planningGateError({ task: "ship login", no_plan: true, ticket: "T-1" }), null);
 });
 
-test("shouldReturnToDevelopment is fail-closed on missing verdicts and fail-closed on empty claims", () => {
+test("shouldReturnToDevelopment fails closed on malformed or unsupported verdicts", () => {
   assert.equal(shouldReturnToDevelopment(null), true);
   assert.equal(shouldReturnToDevelopment(undefined), true);
-  assert.equal(shouldReturnToDevelopment({ return_to_dev: true, evidence: "  " }), false);
+  assert.equal(shouldReturnToDevelopment({}), true);
+  assert.equal(shouldReturnToDevelopment([]), true);
+  assert.equal(shouldReturnToDevelopment({ return_to_dev: true, evidence: "  " }), true);
   assert.equal(shouldReturnToDevelopment({ return_to_dev: true, evidence: "tests fail" }), true);
+  assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence: "" }), true);
   assert.equal(shouldReturnToDevelopment({ return_to_dev: false, evidence: "ok" }), false);
 });
 
@@ -171,6 +174,21 @@ test("a failed gate (null verdict) returns to Development", () => {
   assert.equal(walkHasNoSkipReplay(result.walk), true);
 });
 
+test("a gate approval without evidence returns to Development", () => {
+  const result = runCycle({
+    args: { task: "fix", no_plan: true, ticket: "T-1", grill: false },
+    decide: (phase, cycle) => {
+      if (phase === "Code review" && cycle === 1) {
+        return { return_to_dev: false, evidence: "" };
+      }
+      return { return_to_dev: false, evidence: "ok", merged: true };
+    },
+  });
+
+  assert.equal(result.walk.filter((phase) => phase === "Development").length, 2);
+  assert.equal(walkHasNoSkipReplay(result.walk), true);
+});
+
 test("role references stay stack-agnostic and match the named sources", () => {
   const refs = planInstall({ platform: "grok", scope: "user" }).refsSrc;
   assert.equal(existsSync(refs), true);
@@ -261,6 +279,7 @@ test("workflow script declares the same phase titles and the no-skip loop", () =
   assert.match(source, /no-grill/);
   assert.match(source, /MAX_CYCLES/);
   assert.match(source, /return_to_dev/);
+  assert.match(source, /trimmed\(res\.output\.evidence\) == "" \{ return true; \}/);
   assert.match(source, /CODING_STANDARDS\.md/);
   assert.match(source, /grill-me/);
   assert.match(source, /update_standards/);
@@ -297,6 +316,7 @@ test("acceptance: retemper skill closes skip holes", () => {
   assert.match(skill, /this session implemented/);
   assert.match(skill, /This cycle licenses/);
   assert.match(skill, /Do not add a repo `\.retemper\//);
+  assert.match(skill, /empty evidence is unusable and fails closed/i);
 });
 
 test("acceptance: Grok workflow closes skip holes", () => {
