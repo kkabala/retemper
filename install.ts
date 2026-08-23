@@ -779,14 +779,18 @@ type UpdateOutcome = {
   failed: boolean;
 };
 
-function updateOne(entry: InstallEntry, opts: ParsedArgs, trackedRecords: ValidInstall[]): UpdateOutcome {
+type PreparedUpdate =
+  | { kind: "malformed"; entry: InstallEntry }
+  | { kind: "missing"; entry: ValidInstall }
+  | { kind: "failed"; entry: ValidInstall; message: string }
+  | { kind: "ready"; entry: ValidInstall; plan: InstallPlan };
+
+function prepareUpdate(entry: InstallEntry, opts: ParsedArgs): PreparedUpdate {
   if (entry.invalid) {
-    console.error(`Skipping malformed install record: ${entry.raw}`);
-    return { keep: true, entry, failed: false };
+    return { kind: "malformed", entry };
   }
   if (entry.scope === "project" && !existsSync(entry.path)) {
-    console.error(`Skipping missing project path: ${entry.path}`);
-    return { keep: Boolean(opts.dryRun), entry, failed: false };
+    return { kind: "missing", entry };
   }
   try {
     const plan = planInstall({
@@ -795,22 +799,44 @@ function updateOne(entry: InstallEntry, opts: ParsedArgs, trackedRecords: ValidI
       target: entry.path,
       standards: opts.standards,
     });
-    console.log(describe(plan, opts));
-    if (!opts.dryRun) {
-      applyPlan(plan, opts);
-      const record = recordFromPlan(plan);
-      writeCoherentInstallManifests(retemperHome(), createInstallManifest(plan, record), trackedRecords);
-    }
-    return { keep: true, entry: recordFromPlan(plan), failed: false };
+    return { kind: "ready", entry, plan };
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
-    return { keep: true, entry, failed: true };
+    return {
+      kind: "failed",
+      entry,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
-function runUpdate(opts: ParsedArgs): number {
-  const filePath = installsPath();
-  const entries = readInstallRecords(filePath);
+function updateOne(prepared: PreparedUpdate, opts: ParsedArgs, trackedRecords: ValidInstall[]): UpdateOutcome {
+  if (prepared.kind === "malformed") {
+    console.error(`Skipping malformed install record: ${prepared.entry.invalid ? prepared.entry.raw : ""}`);
+    return { keep: true, entry: prepared.entry, failed: false };
+  }
+  if (prepared.kind === "missing") {
+    console.error(`Skipping missing project path: ${prepared.entry.path}`);
+    return { keep: Boolean(opts.dryRun), entry: prepared.entry, failed: false };
+  }
+  if (prepared.kind === "failed") {
+    console.error(prepared.message);
+    return { keep: true, entry: prepared.entry, failed: true };
+  }
+  console.log(describe(prepared.plan, opts));
+  try {
+    if (!opts.dryRun) {
+      applyPlan(prepared.plan, opts);
+      const record = recordFromPlan(prepared.plan);
+      writeCoherentInstallManifests(retemperHome(), createInstallManifest(prepared.plan, record), trackedRecords);
+    }
+    return { keep: true, entry: recordFromPlan(prepared.plan), failed: false };
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    return { keep: true, entry: prepared.entry, failed: true };
+  }
+}
+
+function reportUpdateNoOp(entries: InstallEntry[] | null, filePath: string): number | null {
   if (entries === null) {
     console.error(missingInstallsMessage(filePath));
     return 1;
@@ -819,40 +845,78 @@ function runUpdate(opts: ParsedArgs): number {
     console.log("Nothing to update.");
     return 0;
   }
+  return null;
+}
+
+function runPreparedUpdate(
+  opts: ParsedArgs,
+  entries: InstallEntry[],
+  prepared: PreparedUpdate[],
+  persist: boolean,
+): number {
+  const filePath = installsPath();
   let kept: InstallEntry[] = [];
   let failed = 0;
   const trackedRecords = entries.filter((entry): entry is ValidInstall => !entry.invalid);
-  for (const entry of entries) {
-    const outcome = updateOne(entry, opts, trackedRecords);
+  for (const item of prepared) {
+    const outcome = updateOne(item, opts, trackedRecords);
     if (outcome.keep) {
       if (outcome.entry.invalid) kept.push(outcome.entry);
       else kept = upsertInstalls(kept, outcome.entry);
     }
     if (outcome.failed) failed += 1;
   }
-  if (!opts.dryRun) {
-    writeInstalls(kept, filePath);
-  }
+  if (persist) writeInstalls(kept, filePath);
   return failed === 0 ? 0 : 1;
 }
 
-function installOne(platform: string, opts: ParsedArgs): void {
-  const plan = planInstall({ ...opts, platform });
+function hasUpdateMutation(prepared: PreparedUpdate[]): boolean {
+  return prepared.some((item) => item.kind === "ready" || item.kind === "missing");
+}
+
+function runUpdate(opts: ParsedArgs): number {
+  const filePath = installsPath();
+  const entries = readInstallRecords(filePath);
+  const noOp = reportUpdateNoOp(entries, filePath);
+  if (noOp !== null) return noOp;
+  const prepared = entries.map((entry) => prepareUpdate(entry, opts));
+  return runPreparedUpdate(opts, entries, prepared, false);
+}
+
+function runMutatingUpdate(opts: ParsedArgs): number {
+  const filePath = installsPath();
+  const initial = readInstallRecords(filePath);
+  const initialNoOp = reportUpdateNoOp(initial, filePath);
+  if (initialNoOp !== null) return initialNoOp;
+  return withStateLock(retemperHome(), () => {
+    const entries = readInstallRecords(filePath);
+    const lockedNoOp = reportUpdateNoOp(entries, filePath);
+    if (lockedNoOp !== null) return lockedNoOp;
+    const prepared = entries.map((entry) => prepareUpdate(entry, opts));
+    if (!hasUpdateMutation(prepared)) return runPreparedUpdate(opts, entries, prepared, false);
+    rotateStateGeneration(retemperHome());
+    return runPreparedUpdate(opts, entries, prepared, true);
+  });
+}
+
+function prepareInstall(opts: ParsedArgs): InstallPlan[] {
+  assertSupportedPlatforms(opts.platforms);
+  return opts.platforms.map((platform) => planInstall({ ...opts, platform }));
+}
+
+function installOne(plan: InstallPlan, opts: ParsedArgs): void {
   console.log(describe(plan, opts));
-  if (opts.dryRun) {
-    return;
-  }
+  if (opts.dryRun) return;
   applyPlan(plan, opts);
   recordInstall(plan);
   console.log(`installed ${NAME} (${plan.scope})`);
 }
 
-function runInstall(opts: ParsedArgs): number {
-  assertSupportedPlatforms(opts.platforms);
+function runInstall(opts: ParsedArgs, plans: InstallPlan[]): number {
   let failed = 0;
-  for (const platform of opts.platforms) {
+  for (const plan of plans) {
     try {
-      installOne(platform, opts);
+      installOne(plan, opts);
     } catch (error) {
       console.error(error instanceof Error ? error.message : error);
       failed += 1;
@@ -867,9 +931,12 @@ export function main(argv: string[] = process.argv): number {
     console.log(helpText());
     return 0;
   }
+  if (opts.update) return opts.dryRun ? runUpdate(opts) : runMutatingUpdate(opts);
+  const plans = prepareInstall(opts);
+  if (opts.dryRun) return runInstall(opts, plans);
   return withStateLock(retemperHome(), () => {
-    if (!opts.dryRun) rotateStateGeneration(retemperHome());
-    return opts.update ? runUpdate(opts) : runInstall(opts);
+    rotateStateGeneration(retemperHome());
+    return runInstall(opts, plans);
   });
 }
 

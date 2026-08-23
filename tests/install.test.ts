@@ -584,6 +584,25 @@ test("CLI dry-run for Codex project prints dests and writes nothing", () => {
   });
 });
 
+test("CLI dry-run does not create a nonexistent state home", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-dry-state-"));
+  const target = join(holder, "project");
+  const home = join(holder, "missing-state");
+  mkdirSync(target);
+  try {
+    const result = cli(
+      ["--dry-run", "--platform", "codex", "--scope", "project", "--target", target],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(home), false);
+    assert.equal(existsSync(join(target, ".agents")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("CLI project install requires an explicit target and leaves the working directory untouched", () => {
   const workingDirectory = mkdtempSync(join(tmpdir(), "retemper-no-target-"));
   withHome((home) => {
@@ -997,6 +1016,20 @@ test("CLI --update with no tracking file tells the user to install and writes no
   });
 });
 
+test("CLI --update with no tracking file does not create a nonexistent state home", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-update-missing-state-"));
+  const home = join(holder, "missing-state");
+  try {
+    const result = cli(["--update"], { RETEMPER_HOME: home });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /installs\.txt/);
+    assert.equal(existsSync(home), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("CLI --update restores a deleted Cursor project payload from the tracking file", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-upd-"));
   withHome((home) => {
@@ -1102,6 +1135,8 @@ test("CLI --update with an empty tracking file reports nothing to update", () =>
     const result = cli(["--update"], { RETEMPER_HOME: home });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /nothing to update/i);
+    assert.equal(existsSync(join(home, "state.generation")), false);
+    assert.equal(existsSync(join(home, "state.lock")), false);
   });
 });
 
@@ -1350,6 +1385,26 @@ test("CLI --platform grok claude rejects the unknown name and writes nothing", (
       rmSync(target, { recursive: true, force: true });
     }
   });
+});
+
+test("CLI rejects an invalid platform before creating state", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-invalid-state-"));
+  const target = join(holder, "project");
+  const home = join(holder, "missing-state");
+  mkdirSync(target);
+  try {
+    const result = cli(
+      ["--platform", "nope", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Unsupported platform "nope"/);
+    assert.equal(existsSync(home), false);
+    assert.equal(existsSync(join(target, ".agents")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
 });
 
 test("CLI multi-platform user install writes Grok and shared Cursor skill dests", () => {
