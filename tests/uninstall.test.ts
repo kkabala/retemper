@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -68,6 +68,45 @@ function dispatchCli(args: string[], env: CliEnv = {}) {
     cwd: root,
     env: { ...process.env, ...env },
   });
+}
+
+function interactiveCli(args: string[], env: CliEnv = {}) {
+  const child = spawn(process.execPath, [uninstallPath, ...args], {
+    cwd: root,
+    env: { ...process.env, ...env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let promptSettled = false;
+  let promptTimer: ReturnType<typeof setTimeout>;
+  const prompt = new Promise<void>((resolvePrompt, rejectPrompt) => {
+    promptTimer = setTimeout(() => {
+      if (!promptSettled) rejectPrompt(new Error(`Timed out waiting for uninstall prompt. stdout=${stdout} stderr=${stderr}`));
+    }, 5_000);
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+      if (!promptSettled && stdout.includes("Proceed with removal?")) {
+        promptSettled = true;
+        clearTimeout(promptTimer);
+        resolvePrompt();
+      }
+    });
+    child.once("close", (code) => {
+      if (!promptSettled) {
+        promptSettled = true;
+        clearTimeout(promptTimer);
+        rejectPrompt(new Error(`Uninstall exited before prompting (${code}). stdout=${stdout} stderr=${stderr}`));
+      }
+    });
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const completed = new Promise<{ status: number | null; stdout: string; stderr: string }>((resolveResult) => {
+    child.once("close", (status) => resolveResult({ status, stdout, stderr }));
+  });
+  return { child, prompt, completed };
 }
 
 function withHome<T>(fn: (home: string) => T): T {
@@ -340,6 +379,8 @@ test("CLI shows planned paths before the prompt and aborts unless accepted", () 
       );
       assert.equal(setup.status, 0, setup.stderr);
       const skillMd = join(target, ".agents", "skills", "retemper", "SKILL.md");
+      const generationPath = join(home, "state.generation");
+      const generationBeforeDecline = readFileSync(generationPath, "utf8");
 
       const declined = cli(
         ["--platform", "codex", "--scope", "project", "--target", target],
@@ -354,6 +395,8 @@ test("CLI shows planned paths before the prompt and aborts unless accepted", () 
       assert.match(declined.stdout, /Aborted\. Nothing was removed\./);
       assert.equal(existsSync(skillMd), true);
       assert.equal(readFileSync(join(home, "installs.txt"), "utf8").trim(), `codex project ${target}`);
+      assert.equal(readFileSync(generationPath, "utf8"), generationBeforeDecline);
+      assert.equal(existsSync(join(home, "state.lock")), false);
 
       const eof = cli(["--platform", "codex", "--scope", "project", "--target", target], { RETEMPER_HOME: home }, "");
       assert.equal(eof.status, 0, eof.stderr);
@@ -373,6 +416,96 @@ test("CLI shows planned paths before the prompt and aborts unless accepted", () 
       rmSync(target, { recursive: true, force: true });
     }
   });
+});
+
+test("acceptance: an uninstall prompt becomes stale when the same record is reinstalled", async () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-un-stale-prompt-"));
+  const home = mkdtempSync(join(tmpdir(), "retemper-un-stale-state-"));
+  try {
+    const args = ["--platform", "cursor", "--scope", "project", "--target", target];
+    const setup = installCli([...args, "--skip-deps"], { RETEMPER_HOME: home });
+    assert.equal(setup.status, 0, setup.stderr);
+    const pending = interactiveCli(args, { RETEMPER_HOME: home });
+    await pending.prompt;
+
+    const reinstall = installCli([...args, "--skip-deps"], { RETEMPER_HOME: home });
+    assert.equal(reinstall.status, 0, reinstall.stderr);
+    pending.child.stdin.end("yes\n");
+    const stale = await pending.completed;
+
+    assert.notEqual(stale.status, 0);
+    assert.match(stale.stderr, /state.*changed|stale.*plan|generation/i);
+    assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), true);
+    assert.match(readFileSync(join(home, "installs.txt"), "utf8"), /^cursor project /m);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("acceptance: a live state lock fails closed before a multi-platform install writes", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-install-lock-project-"));
+  const home = mkdtempSync(join(tmpdir(), "retemper-install-lock-state-"));
+  mkdirSync(join(home, "state.lock"));
+  try {
+    const result = installCli(
+      ["--platform", "codex,cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /state lock|another retemper operation|contention/i);
+    assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), false);
+    assert.equal(existsSync(join(home, "installs.txt")), false);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("acceptance: malformed state generation fails closed before install writes", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-install-bad-generation-project-"));
+  const home = mkdtempSync(join(tmpdir(), "retemper-install-bad-generation-state-"));
+  writeFileSync(join(home, "state.generation"), "not-a-generation\n");
+  try {
+    const result = installCli(
+      ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /invalid.*state generation|concurrent state changes/i);
+    assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), false);
+    assert.equal(existsSync(join(home, "installs.txt")), false);
+    assert.equal(existsSync(join(home, "state.lock")), false);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("acceptance: uninstall dry-run releases the lock without rotating state generation", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-un-dry-generation-project-"));
+  const home = mkdtempSync(join(tmpdir(), "retemper-un-dry-generation-state-"));
+  try {
+    const setup = installCli(
+      ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+    assert.equal(setup.status, 0, setup.stderr);
+    const generationPath = join(home, "state.generation");
+    const before = readFileSync(generationPath, "utf8");
+
+    const result = cli(["--all", "--dry-run"], { RETEMPER_HOME: home });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(generationPath, "utf8"), before);
+    assert.equal(existsSync(join(home, "state.lock")), false);
+    assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), true);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("CLI --dry-run lists everything and removes nothing", () => {
@@ -565,6 +698,114 @@ test("acceptance: a later shared install refreshes older owners before last-owne
       assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), false);
     } finally {
       rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("acceptance: a newer shared install adds new files to older owner manifests", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-un-shared-new-entry-"));
+  withHome((home) => {
+    try {
+      const codex = installCli(
+        ["--platform", "codex", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(codex.status, 0, codex.stderr);
+      const codexRecord = { platform: "codex", scope: "project", path: target } as const;
+      const oldSnapshot = readInstallManifest(home, codexRecord);
+      assert.ok(oldSnapshot);
+      const introducedFile = join(".agents", "skills", "orchestrate", "references", "orchestrator.md");
+      const introducedDirectory = dirname(introducedFile);
+      oldSnapshot.entries = oldSnapshot.entries.filter((entry) => entry.relativePath !== introducedFile);
+      oldSnapshot.directories = oldSnapshot.directories.filter(
+        (directory) => directory.relativePath !== introducedDirectory,
+      );
+      writeInstallManifest(home, oldSnapshot);
+
+      const cursor = installCli(
+        ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+        { RETEMPER_HOME: home },
+      );
+      assert.equal(cursor.status, 0, cursor.stderr);
+      const removeCursor = cli(
+        ["--platform", "cursor", "--scope", "project", "--target", target, "--yes"],
+        { RETEMPER_HOME: home },
+      );
+
+      assert.equal(removeCursor.status, 0, removeCursor.stderr);
+      assert.equal(existsSync(join(target, introducedFile)), true);
+      const refreshedCodex = readInstallManifest(home, codexRecord);
+      assert.ok(refreshedCodex);
+      assert.equal(refreshedCodex.entries.some((entry) => entry.relativePath === introducedFile), true);
+      assert.equal(
+        refreshedCodex.directories.some((directory) => directory.relativePath === introducedDirectory),
+        true,
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("acceptance: Grok ownership is never inferred from a shared project root", () => {
+  const target = mkdtempSync(join(tmpdir(), "retemper-un-grok-not-shared-"));
+  withHome((home) => {
+    try {
+      const env = { RETEMPER_HOME: home };
+      const grok = installCli(
+        ["--platform", "grok", "--scope", "project", "--target", target, "--skip-deps"],
+        env,
+      );
+      assert.equal(grok.status, 0, grok.stderr);
+      const grokRecord = { platform: "grok", scope: "project", path: target } as const;
+      const before = readInstallManifest(home, grokRecord);
+      assert.ok(before);
+
+      const cursor = installCli(
+        ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+        env,
+      );
+      assert.equal(cursor.status, 0, cursor.stderr);
+      const after = readInstallManifest(home, grokRecord);
+      assert.deepEqual(after, before);
+
+      const removeCursor = cli(
+        ["--platform", "cursor", "--scope", "project", "--target", target, "--yes"],
+        env,
+      );
+      assert.equal(removeCursor.status, 0, removeCursor.stderr);
+      assert.equal(existsSync(join(target, ".agents")), false);
+      assert.equal(existsSync(join(target, ".grok", "workflows", "retemper.rhai")), true);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+test("acceptance: Codex compatibility roots are excluded from shared owner refresh", () => {
+  const agents = mkdtempSync(join(tmpdir(), "retemper-un-shared-primary-"));
+  const codexHomePath = mkdtempSync(join(tmpdir(), "retemper-un-shared-codex-"));
+  withHome((home) => {
+    try {
+      const env = { RETEMPER_HOME: home, AGENTS_HOME: agents, CODEX_HOME: codexHomePath };
+      const copilot = installCli(["--platform", "copilot", "--scope", "user", "--skip-deps"], env);
+      assert.equal(copilot.status, 0, copilot.stderr);
+      const codex = installCli(["--platform", "codex", "--scope", "user", "--skip-deps"], env);
+      assert.equal(codex.status, 0, codex.stderr);
+
+      const copilotRecord = { platform: "copilot", scope: "user", path: agents } as const;
+      const refreshed = readInstallManifest(home, copilotRecord);
+      assert.ok(refreshed);
+      assert.equal(refreshed.roots.length, 1);
+      assert.equal(refreshed.entries.every((entry) => entry.root === 0), true);
+
+      const removeCodex = cli(["--platform", "codex", "--scope", "user", "--yes"], env);
+      assert.equal(removeCodex.status, 0, removeCodex.stderr);
+      assert.equal(existsSync(join(codexHomePath, "skills", "retemper")), false);
+      assert.equal(existsSync(join(agents, "skills", "retemper", "SKILL.md")), true);
+    } finally {
+      rmSync(agents, { recursive: true, force: true });
+      rmSync(codexHomePath, { recursive: true, force: true });
     }
   });
 });
@@ -914,7 +1155,7 @@ test("acceptance: uninstall rejects a retargeted recorded project root", () => {
 test("acceptance: uninstall rejects a retargeted intermediate directory", () => {
   const holder = mkdtempSync(join(tmpdir(), "retemper-un-inner-link-"));
   const target = join(holder, "project");
-  const installedAgents = join(holder, "installed-agents");
+  const installedAgents = join(target, "installed-agents");
   const unrelatedAgents = join(holder, "unrelated-agents");
   mkdirSync(target);
   mkdirSync(installedAgents);
@@ -943,6 +1184,29 @@ test("acceptance: uninstall rejects a retargeted intermediate directory", () => 
       rmSync(holder, { recursive: true, force: true });
     }
   });
+});
+
+test("acceptance: install rejects a destination ancestor that escapes the project root", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-install-escaped-ancestor-"));
+  const target = join(holder, "project");
+  const externalAgents = join(holder, "external-agents");
+  const home = join(holder, "state");
+  mkdirSync(target);
+  mkdirSync(externalAgents);
+  symlinkSync(externalAgents, join(target, ".agents"));
+  try {
+    const result = installCli(
+      ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /outside.*physical.*root|escapes.*target/i);
+    assert.equal(existsSync(join(externalAgents, "skills", "retemper", "SKILL.md")), false);
+    assert.equal(existsSync(join(home, "installs.txt")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
 });
 
 test("acceptance: malformed persisted ownership metadata fails closed", () => {
@@ -995,40 +1259,50 @@ test("acceptance: tracking that expects a missing manifest fails closed", () => 
   });
 });
 
-test("acceptance: a tracking write failure leaves a retry-safe manifest mismatch", () => {
+test("acceptance: a tracking write failure retains metadata for a safe direct retry", async () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-un-retry-safe-"));
-  withHome((home) => {
-    const record = { platform: "cursor", scope: "project", path: target } as const;
-    try {
-      const setup = installCli(
-        ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
-        { RETEMPER_HOME: home },
-      );
-      assert.equal(setup.status, 0, setup.stderr);
-      assert.equal(existsSync(manifestPath(home, record)), true);
-      assert.equal(existsSync(manifestExpectationPath(home, record)), true);
-      chmodSync(home, 0o500);
+  const home = mkdtempSync(join(tmpdir(), "retemper-un-retry-home-"));
+  const record = { platform: "cursor", scope: "project", path: target } as const;
+  const modified = join(target, ".agents", "skills", "retemper", "SKILL.md");
+  let blocker = "";
+  try {
+    const setup = installCli(
+      ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+    assert.equal(setup.status, 0, setup.stderr);
+    writeFileSync(modified, "keep my edit\n");
+    writeFileSync(join(home, "installs.txt"), `cursor project ${target}\nnot-a-line\n`);
+    const pending = interactiveCli(["--all"], { RETEMPER_HOME: home });
+    await pending.prompt;
+    assert.ok(pending.child.pid);
+    blocker = `${join(home, "installs.txt")}.${pending.child.pid}.tmp`;
+    mkdirSync(blocker);
+    pending.child.stdin.end("yes\n");
 
-      const interrupted = cli(["--all", "--yes"], { RETEMPER_HOME: home });
+    const interrupted = await pending.completed;
 
-      assert.notEqual(interrupted.status, 0);
-      assert.match(interrupted.stderr, /EACCES|permission denied/i);
-      assert.equal(existsSync(join(target, ".agents", "skills", "retemper", "SKILL.md")), false);
-      assert.equal(existsSync(manifestPath(home, record)), false);
-      assert.equal(existsSync(manifestExpectationPath(home, record)), true);
-      assert.equal(existsSync(join(home, "installs.txt")), true);
+    assert.notEqual(interrupted.status, 0);
+    assert.match(interrupted.stderr, /EISDIR|directory/i);
+    assert.equal(readFileSync(modified, "utf8"), "keep my edit\n");
+    assert.equal(existsSync(manifestPath(home, record)), true);
+    assert.equal(existsSync(manifestExpectationPath(home, record)), true);
+    assert.match(readFileSync(join(home, "installs.txt"), "utf8"), /^cursor project /m);
 
-      chmodSync(home, 0o700);
-      const retry = cli(["--all", "--yes"], { RETEMPER_HOME: home });
+    rmSync(blocker, { recursive: true, force: true });
+    blocker = "";
+    const retry = cli(["--all", "--yes"], { RETEMPER_HOME: home });
 
-      assert.notEqual(retry.status, 0);
-      assert.match(retry.stderr, /manifest mismatch|ownership metadata is missing/i);
-      assert.equal(existsSync(join(home, "installs.txt")), true);
-    } finally {
-      chmodSync(home, 0o700);
-      rmSync(target, { recursive: true, force: true });
-    }
-  });
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.equal(readFileSync(modified, "utf8"), "keep my edit\n");
+    assert.equal(existsSync(manifestPath(home, record)), false);
+    assert.equal(existsSync(manifestExpectationPath(home, record)), false);
+    assert.equal(readFileSync(join(home, "installs.txt"), "utf8").trim(), "not-a-line");
+  } finally {
+    if (blocker) rmSync(blocker, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("CLI --all without a tracking file reports nothing to uninstall", () => {

@@ -41,6 +41,13 @@ import {
   removeInstallManifest,
 } from "./lib/install-manifest.ts";
 import type { InstallManifest, OwnedEntry, PhysicalDirectory, PhysicalRoot } from "./lib/install-manifest.ts";
+import {
+  acquireStateLock,
+  assertStateGeneration,
+  readStateGeneration,
+  releaseStateLock,
+  rotateStateGeneration,
+} from "./lib/install-state.ts";
 
 export type ParsedUninstallArgs = {
   help: boolean;
@@ -67,6 +74,13 @@ type TrackingSnapshot = {
   text: string | null;
   entries: InstallEntry[];
   valid: ValidInstall[];
+};
+type UninstallPlan = {
+  generation: string;
+  snapshot: TrackingSnapshot;
+  selected: Set<ValidInstall>;
+  installs: LoadedInstall[];
+  jobs: RemovalJob[];
 };
 
 function nodeErrorCode(error: unknown): string | undefined {
@@ -364,6 +378,16 @@ function preflight(all: LoadedInstall[], selected: Set<ValidInstall>): RemovalJo
   return [...jobs.values()].sort((left, right) => right.path.length - left.path.length);
 }
 
+function loadUninstallPlan(opts: ParsedUninstallArgs): UninstallPlan {
+  const generation = readStateGeneration(retemperHome());
+  const snapshot = readTracking(installsPath());
+  const selectedRecordsList = selectedRecords(snapshot, opts);
+  const selected = new Set(selectedRecordsList);
+  if (!selected.size) return { generation, snapshot, selected, installs: [], jobs: [] };
+  const installs = snapshot.valid.map(loadInstall);
+  return { generation, snapshot, selected, installs, jobs: preflight(installs, selected) };
+}
+
 function describeRemoval(
   installs: LoadedInstall[],
   selected: Set<ValidInstall>,
@@ -471,19 +495,6 @@ function writeTracking(entries: InstallEntry[], filePath: string): void {
   renameSync(temporary, filePath);
 }
 
-function assertTrackingUnchanged(snapshot: TrackingSnapshot): void {
-  let current: string | null;
-  try {
-    current = readFileSync(snapshot.filePath, "utf8");
-  } catch (error) {
-    if (isMissingPathError(error)) current = null;
-    else throw error;
-  }
-  if (current !== snapshot.text) {
-    throw new Error("Install tracking changed after the uninstall plan was shown; rerun to review the new plan.");
-  }
-}
-
 function cleanupStateDirectories(): void {
   for (const path of [join(retemperHome(), "manifests"), join(retemperHome(), "manifest-expectations"), retemperHome()]) {
     try {
@@ -534,41 +545,53 @@ export async function uninstallMain(argv: string[] = process.argv): Promise<numb
     return 0;
   }
   validateUninstallArgs(opts);
-  const snapshot = readTracking(installsPath());
-  const selectedRecordsList = selectedRecords(snapshot, opts);
-  if (!selectedRecordsList.length) {
+  const stateHome = retemperHome();
+  const planningLock = acquireStateLock(stateHome);
+  let planned: UninstallPlan;
+  try {
+    planned = loadUninstallPlan(opts);
+  } finally {
+    releaseStateLock(planningLock);
+  }
+  if (!planned.selected.size) {
     console.log("retemper uninstall — planned removals\n\n  (no files found)\n");
     console.log("Nothing to uninstall.");
     return 0;
   }
 
-  const selected = new Set(selectedRecordsList);
-  const installs = snapshot.valid.map(loadInstall);
-  const jobs = preflight(installs, selected);
-  console.log(describeRemoval(installs, selected, jobs, snapshot.filePath, opts));
+  console.log(describeRemoval(planned.installs, planned.selected, planned.jobs, planned.snapshot.filePath, opts));
   if (opts.dryRun) return 0;
   if (!opts.yes && !(await confirmRemoval())) {
     console.log("Aborted. Nothing was removed.");
     return 0;
   }
 
-  assertTrackingUnchanged(snapshot);
-  const finalJobs = preflight(installs, selected);
-  if (!sameRemovalSet(jobs, finalJobs)) {
-    throw new Error("Owned paths changed after the uninstall plan was shown; rerun to review the new plan.");
-  }
-  applyRemovals(finalJobs);
-  pruneEmptyOwnedDirectories(installs, selected);
+  const mutationLock = acquireStateLock(stateHome);
+  try {
+    assertStateGeneration(stateHome, planned.generation);
+    const current = loadUninstallPlan(opts);
+    if (current.snapshot.text !== planned.snapshot.text) {
+      throw new Error("Install tracking changed after the uninstall plan was shown; rerun to review the new plan.");
+    }
+    if (!sameRemovalSet(planned.jobs, current.jobs)) {
+      throw new Error("Owned paths changed after the uninstall plan was shown; rerun to review the new plan.");
+    }
+    rotateStateGeneration(stateHome, planned.generation);
+    applyRemovals(current.jobs);
+    pruneEmptyOwnedDirectories(current.installs, current.selected);
 
-  for (const install of installs) {
-    if (selected.has(install.record) && !install.legacy) removeInstallManifest(retemperHome(), install.record);
+    const kept = current.snapshot.entries.filter((entry) => entry.invalid || !current.selected.has(entry));
+    writeTracking(kept, current.snapshot.filePath);
+    for (const install of current.installs) {
+      if (current.selected.has(install.record) && !install.legacy) {
+        removeInstallManifest(stateHome, install.record);
+        finalizeInstallManifestRemoval(stateHome, install.record);
+      }
+    }
+    cleanupStateDirectories();
+  } finally {
+    releaseStateLock(mutationLock);
   }
-  const kept = snapshot.entries.filter((entry) => entry.invalid || !selected.has(entry));
-  writeTracking(kept, snapshot.filePath);
-  for (const install of installs) {
-    if (selected.has(install.record) && !install.legacy) finalizeInstallManifestRemoval(retemperHome(), install.record);
-  }
-  cleanupStateDirectories();
   console.log(`uninstalled ${NAME}`);
   return 0;
 }

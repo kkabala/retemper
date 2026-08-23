@@ -39,7 +39,12 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-import { createInstallManifest, writeCoherentInstallManifests } from "./lib/install-manifest.ts";
+import {
+  assertInstallPlanPhysicalContainment,
+  createInstallManifest,
+  writeCoherentInstallManifests,
+} from "./lib/install-manifest.ts";
+import { rotateStateGeneration, withStateLock } from "./lib/install-state.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const NAME = "retemper";
@@ -699,6 +704,7 @@ export function apply(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
   for (const link of plan.skillLinks) {
     repairLegacySelfLink(link.src, link.dest);
   }
+  assertInstallPlanPhysicalContainment(plan);
   if (plan.workflowSrc && plan.workflowDest) {
     mkdirSync(dirname(plan.workflowDest), { recursive: true });
     writeFileSync(plan.workflowDest, readFileSync(plan.workflowSrc));
@@ -861,10 +867,10 @@ export function main(argv: string[] = process.argv): number {
     console.log(helpText());
     return 0;
   }
-  if (opts.update) {
-    return runUpdate(opts);
-  }
-  return runInstall(opts);
+  return withStateLock(retemperHome(), () => {
+    if (!opts.dryRun) rotateStateGeneration(retemperHome());
+    return opts.update ? runUpdate(opts) : runInstall(opts);
+  });
 }
 
 export function runCli(moduleUrl: string = import.meta.url): void {

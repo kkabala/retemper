@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   createInstallManifest,
+  manifestExpectationPath,
   manifestPath,
   parseInstallManifest,
 } from "../lib/install-manifest.ts";
@@ -48,6 +49,16 @@ test("parseInstallManifest accepts the strict v2 ownership schema", () => {
     manifestPath("/state", record),
     join("/state", "manifests", "7c3a25a7ece6ce8d23376750e98d9c88c64fe5a715e24ce9001d095407fdc0bd.json"),
   );
+  assert.equal(
+    manifestExpectationPath(join("/state", "manifests", "nested"), record),
+    join(
+      "/state",
+      "manifests",
+      "nested",
+      "manifest-expectations",
+      "7c3a25a7ece6ce8d23376750e98d9c88c64fe5a715e24ce9001d095407fdc0bd.expected",
+    ),
+  );
 });
 
 test("parseInstallManifest rejects untrusted paths, versions, and shapes", () => {
@@ -68,6 +79,14 @@ test("parseInstallManifest rejects untrusted paths, versions, and shapes", () =>
     {
       ...validManifest(),
       entries: [{ ...validManifest().entries[0], root: 2 }],
+    },
+    {
+      ...validManifest(),
+      directories: [{ ...validManifest().directories[0], realPath: "/outside/retemper" }],
+    },
+    {
+      ...validManifest(),
+      entries: [{ ...validManifest().entries[0], realPath: "/outside/SKILL.md" }],
     },
   ];
 

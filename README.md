@@ -72,6 +72,12 @@ Notes:
   compatibility links. A legacy `installs.txt` record is still accepted when
   its destination can be verified safely; otherwise reinstall or update it to
   create ownership metadata before uninstalling.
+- Install, update, and uninstall mutations are serialized in `$RETEMPER_HOME`.
+  An uninstall prompt is rejected if the recorded state changes while it is
+  waiting for confirmation.
+- The manifest expectation digest detects torn or mismatched local state. It is
+  not an authentication boundary against another process running as the same
+  account.
 - Empty folders left behind are pruned; install roots themselves stay.
 - Uninstalled records disappear from `installs.txt`; the file is deleted when
   the last record goes.

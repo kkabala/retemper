@@ -11,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 
 import type { InstallPlan, ValidInstall } from "../install.ts";
 
@@ -74,17 +74,18 @@ function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-export function manifestPath(stateHome: string, record: ValidInstall): string {
-  const key = createHash("sha256")
+function manifestKey(record: ValidInstall): string {
+  return createHash("sha256")
     .update(JSON.stringify([record.platform, record.scope, record.path]))
     .digest("hex");
-  return join(stateHome, "manifests", `${key}.json`);
+}
+
+export function manifestPath(stateHome: string, record: ValidInstall): string {
+  return join(stateHome, "manifests", `${manifestKey(record)}.json`);
 }
 
 export function manifestExpectationPath(stateHome: string, record: ValidInstall): string {
-  return manifestPath(stateHome, record)
-    .replace(`${sep}manifests${sep}`, `${sep}manifest-expectations${sep}`)
-    .replace(/\.json$/, ".expected");
+  return join(stateHome, "manifest-expectations", `${manifestKey(record)}.expected`);
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
@@ -110,6 +111,11 @@ function contained(root: string, relativePath: string): boolean {
   const destination = resolve(root, relativePath);
   const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
   return destination.startsWith(prefix);
+}
+
+function physicalDescendant(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return Boolean(path && path !== "." && !isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
 function parseRecord(value: unknown): ValidInstall | null {
@@ -138,6 +144,7 @@ function parseDirectory(value: unknown, roots: PhysicalRoot[]): PhysicalDirector
   if (!validRootIndex(value.root, roots) || !safeRelativePath(value.relativePath)) return null;
   if (!contained(roots[value.root].path, value.relativePath)) return null;
   if (typeof value.realPath !== "string" || !isAbsolute(value.realPath)) return null;
+  if (!physicalDescendant(roots[value.root].realPath, value.realPath)) return null;
   if (!physicalId(value.device) || !physicalId(value.inode)) return null;
   return value as PhysicalDirectory;
 }
@@ -148,6 +155,7 @@ function parseEntry(value: unknown, roots: PhysicalRoot[]): OwnedEntry | null {
   if (value.kind === "file") {
     if (!exactKeys(value, ["kind", "realPath", "relativePath", "root", "sha256"])) return null;
     if (typeof value.realPath !== "string" || !isAbsolute(value.realPath)) return null;
+    if (!physicalDescendant(roots[value.root].realPath, value.realPath)) return null;
     if (typeof value.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.sha256)) return null;
     return value as OwnedFile;
   }
@@ -285,24 +293,86 @@ export function writeInstallManifest(stateHome: string, manifest: InstallManifes
   renameSync(expectedTemporary, expectedPath);
 }
 
+const SHARED_SKILL_PLATFORMS = new Set(["codex", "copilot", "cursor"]);
+
+function samePhysicalIdentity(left: PhysicalRoot, right: PhysicalRoot): boolean {
+  return left.device === right.device && left.inode === right.inode;
+}
+
+function sharesPrimaryPayload(manifest: InstallManifest, current: InstallManifest): boolean {
+  if (!SHARED_SKILL_PLATFORMS.has(manifest.record.platform)) return false;
+  if (!SHARED_SKILL_PLATFORMS.has(current.record.platform)) return false;
+  if (manifest.record.scope !== current.record.scope) return false;
+  const previousRoot = manifest.roots[0];
+  const currentRoot = current.roots[0];
+  const sameNamedRoot = resolve(previousRoot.path) === resolve(currentRoot.path) ||
+    previousRoot.realPath === currentRoot.realPath;
+  if (sameNamedRoot && !samePhysicalIdentity(previousRoot, currentRoot)) {
+    throw new Error(`Shared install root identity changed at ${previousRoot.path}; refusing to merge ownership.`);
+  }
+  return samePhysicalIdentity(previousRoot, currentRoot);
+}
+
 function refreshSharedEntries(manifest: InstallManifest, current: InstallManifest): InstallManifest | null {
-  const currentEntries = new Map(current.entries.map((entry) => [ownedEntryKey(current, entry), entry]));
-  let changed = false;
-  const entries = manifest.entries.map((entry) => {
-    const replacement = currentEntries.get(ownedEntryKey(manifest, entry));
-    if (!replacement || replacement.kind !== entry.kind) return entry;
-    if (entry.kind === "file" && replacement.kind === "file") {
-      if (entry.realPath === replacement.realPath && entry.sha256 === replacement.sha256) return entry;
-      changed = true;
-      return { ...entry, realPath: replacement.realPath, sha256: replacement.sha256 };
+  if (!sharesPrimaryPayload(manifest, current)) return null;
+  const primaryDirectories = new Map(
+    manifest.directories.filter((directory) => directory.root === 0).map((directory) => [directory.relativePath, directory]),
+  );
+  const primaryEntries = new Map(
+    manifest.entries.filter((entry) => entry.root === 0).map((entry) => [entry.relativePath, entry]),
+  );
+  const directories = [...manifest.directories];
+  const entries = [...manifest.entries];
+
+  for (const directory of current.directories.filter((candidate) => candidate.root === 0)) {
+    if (primaryEntries.has(directory.relativePath)) {
+      throw new Error(`Shared ownership kind conflict at ${directory.relativePath}.`);
     }
-    if (entry.kind === "link" && replacement.kind === "link" && entry.target !== replacement.target) {
-      changed = true;
-      return { ...entry, target: replacement.target };
+    const existing = primaryDirectories.get(directory.relativePath);
+    if (existing) {
+      if (
+        existing.realPath !== directory.realPath ||
+        existing.device !== directory.device ||
+        existing.inode !== directory.inode
+      ) {
+        throw new Error(`Shared directory identity conflict at ${directory.relativePath}.`);
+      }
+      continue;
     }
-    return entry;
-  });
-  return changed ? { ...manifest, entries } : null;
+    const added = { ...directory, root: 0 };
+    primaryDirectories.set(added.relativePath, added);
+    directories.push(added);
+  }
+
+  for (const currentEntry of current.entries.filter((candidate) => candidate.root === 0)) {
+    if (primaryDirectories.has(currentEntry.relativePath)) {
+      throw new Error(`Shared ownership kind conflict at ${currentEntry.relativePath}.`);
+    }
+    const existing = primaryEntries.get(currentEntry.relativePath);
+    const replacement = { ...currentEntry, root: 0 };
+    if (!existing) {
+      primaryEntries.set(replacement.relativePath, replacement);
+      entries.push(replacement);
+      continue;
+    }
+    if (existing.kind !== replacement.kind) {
+      throw new Error(`Shared ownership kind conflict at ${currentEntry.relativePath}.`);
+    }
+    const index = entries.indexOf(existing);
+    entries[index] = replacement;
+    primaryEntries.set(replacement.relativePath, replacement);
+  }
+
+  const refreshed: InstallManifest = {
+    ...manifest,
+    directories: directories.sort((left, right) =>
+      left.root - right.root || left.relativePath.localeCompare(right.relativePath)
+    ),
+    entries: entries.sort((left, right) =>
+      left.root - right.root || left.relativePath.localeCompare(right.relativePath)
+    ),
+  };
+  return JSON.stringify(refreshed) === JSON.stringify(manifest) ? null : refreshed;
 }
 
 export function writeCoherentInstallManifests(
@@ -310,14 +380,16 @@ export function writeCoherentInstallManifests(
   current: InstallManifest,
   trackedRecords: ValidInstall[],
 ): void {
-  writeInstallManifest(stateHome, current);
+  const refreshed: InstallManifest[] = [];
   for (const record of trackedRecords) {
     if (sameRecord(record, current.record)) continue;
     const existing = readInstallManifest(stateHome, record);
     if (!existing) continue;
-    const refreshed = refreshSharedEntries(existing, current);
-    if (refreshed) writeInstallManifest(stateHome, refreshed);
+    const next = refreshSharedEntries(existing, current);
+    if (next) refreshed.push(next);
   }
+  writeInstallManifest(stateHome, current);
+  for (const manifest of refreshed) writeInstallManifest(stateHome, manifest);
 }
 
 export function removeInstallManifest(stateHome: string, record: ValidInstall): void {
@@ -358,6 +430,68 @@ export function installedFileCandidates(plan: InstallPlan): FileCandidate[] {
   const unique = new Map<string, FileCandidate>();
   for (const candidate of candidates) unique.set(resolve(candidate.destination), candidate);
   return [...unique.values()];
+}
+
+function prospectiveRealPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    try {
+      lstatSync(path);
+    } catch (lstatError) {
+      if (!isMissingPathError(lstatError)) throw lstatError;
+      const parent = dirname(path);
+      if (parent === path) throw error;
+      return join(prospectiveRealPath(parent), basename(path));
+    }
+    throw new Error(`Cannot authorize dangling install root: ${path}`);
+  }
+}
+
+function assertDestinationPhysicallyContained(root: string, destination: string): void {
+  const absoluteRoot = resolve(root);
+  const absoluteDestination = resolve(destination);
+  const relativePath = rootContains(absoluteRoot, absoluteDestination);
+  if (!relativePath) {
+    throw new Error(`Install destination escapes its target root: ${absoluteDestination}`);
+  }
+  const physicalRoot = prospectiveRealPath(absoluteRoot);
+  let current = absoluteRoot;
+  for (const component of relativePath.split(sep)) {
+    current = join(current, component);
+    try {
+      lstatSync(current);
+    } catch (error) {
+      if (isMissingPathError(error)) return;
+      throw error;
+    }
+    let physicalPath: string;
+    try {
+      physicalPath = realpathSync(current);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new Error(`Install destination has a dangling physical alias: ${current}`);
+      }
+      throw error;
+    }
+    if (!physicalDescendant(physicalRoot, physicalPath)) {
+      throw new Error(
+        `Install destination escapes the authorized physical target root ${physicalRoot}: ${current} -> ${physicalPath}`,
+      );
+    }
+  }
+}
+
+export function assertInstallPlanPhysicalContainment(plan: InstallPlan): void {
+  for (const candidate of installedFileCandidates(plan)) {
+    assertDestinationPhysicallyContained(plan.targetRoot, candidate.destination);
+  }
+  if (plan.standardsDest) assertDestinationPhysicallyContained(plan.targetRoot, plan.standardsDest);
+  for (const link of plan.skillLinks) {
+    const externalRoot = externalLinkRoot(link.dest);
+    assertDestinationPhysicallyContained(externalRoot, dirname(link.dest));
+  }
 }
 
 function identity(path: string): { realPath: string; device: string; inode: string } {
