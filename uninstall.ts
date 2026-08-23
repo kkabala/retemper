@@ -539,6 +539,12 @@ export function helpText(): string {
   ].join("\n");
 }
 
+function reportNothingToUninstall(): number {
+  console.log("retemper uninstall — planned removals\n\n  (no files found)\n");
+  console.log("Nothing to uninstall.");
+  return 0;
+}
+
 export async function uninstallMain(argv: string[] = process.argv): Promise<number> {
   const opts = parseUninstallArgs(argv);
   if (opts.help) {
@@ -547,6 +553,12 @@ export async function uninstallMain(argv: string[] = process.argv): Promise<numb
   }
   validateUninstallArgs(opts);
   const stateHome = retemperHome();
+  try {
+    lstatSync(stateHome);
+  } catch (error) {
+    if (isMissingPathError(error)) return reportNothingToUninstall();
+    throw error;
+  }
   const planningLock = acquireStateLock(stateHome);
   let planned: UninstallPlan;
   try {
@@ -556,9 +568,7 @@ export async function uninstallMain(argv: string[] = process.argv): Promise<numb
     releaseStateLock(planningLock);
   }
   if (!planned.selected.size) {
-    console.log("retemper uninstall — planned removals\n\n  (no files found)\n");
-    console.log("Nothing to uninstall.");
-    return 0;
+    return reportNothingToUninstall();
   }
 
   console.log(describeRemoval(planned.installs, planned.selected, planned.jobs, planned.snapshot.filePath, opts));

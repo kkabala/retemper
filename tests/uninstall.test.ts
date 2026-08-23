@@ -38,6 +38,11 @@ import {
   readInstallManifest,
   writeInstallManifest,
 } from "../lib/install-manifest.ts";
+import {
+  beginOwnershipTransaction,
+  ownershipTransactionPath,
+  rotateStateGeneration,
+} from "../lib/install-state.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const installPath = join(root, "install.ts");
@@ -818,6 +823,75 @@ test("acceptance: a partial peer-manifest update blocks uninstall until the same
   }
 });
 
+test("acceptance: update recovers a mixed transaction already committed to tracking", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-update-post-tracking-"));
+  const target = join(holder, "live-project");
+  const missing = join(holder, "missing-project");
+  const home = join(holder, "state");
+  mkdirSync(target);
+  const live = { platform: "cursor", scope: "project", path: target } as const;
+  const gone = { platform: "codex", scope: "project", path: missing } as const;
+  const modified = join(target, ".agents", "skills", "retemper", "SKILL.md");
+  try {
+    const setup = installCli(
+      ["--platform", "cursor", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+    assert.equal(setup.status, 0, setup.stderr);
+    writeFileSync(join(home, "installs.txt"), `cursor project ${target}\ncodex project ${missing}\n`);
+    beginOwnershipTransaction(home, {
+      kind: "update",
+      records: [live, gone],
+      trackingBefore: `cursor project ${target}\ncodex project ${missing}\n`,
+      trackingAfter: `cursor project ${target}\n`,
+    });
+    writeFileSync(join(home, "installs.txt"), `cursor project ${target}\n`);
+    writeFileSync(modified, "keep post-commit edit\n");
+
+    const recovered = installCli(["--update", "--skip-deps"], { RETEMPER_HOME: home });
+
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(existsSync(ownershipTransactionPath(home)), false);
+    assert.equal(readFileSync(modified, "utf8"), "keep post-commit edit\n");
+    const uninstall = cli(["--all", "--yes"], { RETEMPER_HOME: home });
+    assert.equal(uninstall.status, 0, uninstall.stderr);
+    assert.equal(readFileSync(modified, "utf8"), "keep post-commit edit\n");
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
+test("acceptance: update recovers an all-missing transaction after tracking commit", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-update-post-delete-"));
+  const home = join(holder, "state");
+  const first = { platform: "codex", scope: "project", path: join(holder, "missing-one") } as const;
+  const second = { platform: "cursor", scope: "project", path: join(holder, "missing-two") } as const;
+  mkdirSync(home);
+  try {
+    writeFileSync(join(home, "installs.txt"), `${first.platform} project ${first.path}\n${second.platform} project ${second.path}\n`);
+    rotateStateGeneration(home);
+    const trackingBefore = `${first.platform} project ${first.path}\n${second.platform} project ${second.path}\n`;
+    beginOwnershipTransaction(home, {
+      kind: "update",
+      records: [first, second],
+      trackingBefore,
+      trackingAfter: "",
+    });
+    writeFileSync(join(home, "installs.txt"), "");
+
+    const recovered = installCli(["--update"], { RETEMPER_HOME: home });
+
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(existsSync(ownershipTransactionPath(home)), false);
+    assert.equal(readFileSync(join(home, "installs.txt"), "utf8"), "");
+    const uninstall = cli(["--all", "--yes"], { RETEMPER_HOME: home });
+    assert.equal(uninstall.status, 0, uninstall.stderr);
+    assert.match(uninstall.stdout, /Nothing to uninstall/);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("acceptance: Grok ownership is never inferred from a shared project root", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-un-grok-not-shared-"));
   withHome((home) => {
@@ -1384,6 +1458,20 @@ test("CLI --all without a tracking file reports nothing to uninstall", () => {
     assert.match(result.stdout, /Nothing to uninstall\./);
     assert.equal(existsSync(join(home, "installs.txt")), false);
   });
+});
+
+test("acceptance: uninstall dry-run with no state does not create the state home", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-un-no-state-"));
+  const home = join(holder, "missing-state");
+  try {
+    const result = cli(["--dry-run"], { RETEMPER_HOME: home });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Nothing to uninstall/);
+    assert.equal(existsSync(home), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
 });
 
 test("CLI keeps malformed tracking lines when uninstalling recorded installs", () => {

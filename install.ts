@@ -43,6 +43,7 @@ import {
   assertInstallLinkParentPhysicalContainment,
   assertInstallPlanPhysicalContainment,
   createInstallManifest,
+  isMissingPathError,
   writeCoherentInstallManifests,
 } from "./lib/install-manifest.ts";
 import {
@@ -50,6 +51,8 @@ import {
   assertOwnershipIntentAllowed,
   beginOwnershipTransaction,
   finishOwnershipTransaction,
+  hasOwnershipTransaction,
+  recoverCommittedUpdateTransaction,
   rotateStateGeneration,
   withStateLock,
 } from "./lib/install-state.ts";
@@ -408,9 +411,19 @@ function writeInstalls(entries: InstallEntry[], filePath = installsPath()): void
   renameSync(tmp, filePath);
 }
 
+function readInstallTracking(filePath = installsPath()): { text: string | null; entries: InstallEntry[] | null } {
+  let text: string;
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) return { text: null, entries: null };
+    throw error;
+  }
+  return { text, entries: parseInstalls(text) };
+}
+
 function readInstallRecords(filePath = installsPath()): InstallEntry[] | null {
-  if (!existsSync(filePath)) return null;
-  return parseInstalls(readFileSync(filePath, "utf8"));
+  return readInstallTracking(filePath).entries;
 }
 
 function recordInstall(plan: InstallPlan): void {
@@ -891,6 +904,17 @@ function updateIntentRecords(prepared: PreparedUpdate[]): ValidInstall[] {
   });
 }
 
+function expectedUpdatedEntries(prepared: PreparedUpdate[]): InstallEntry[] {
+  let kept: InstallEntry[] = [];
+  for (const item of prepared) {
+    if (item.kind === "missing") continue;
+    const entry = item.kind === "ready" ? recordFromPlan(item.plan) : item.entry;
+    if (entry.invalid) kept.push(entry);
+    else kept = upsertInstalls(kept, entry);
+  }
+  return kept;
+}
+
 function runUpdate(opts: ParsedArgs): number {
   const filePath = installsPath();
   const entries = readInstallRecords(filePath);
@@ -902,24 +926,40 @@ function runUpdate(opts: ParsedArgs): number {
 
 function runMutatingUpdate(opts: ParsedArgs): number {
   const filePath = installsPath();
-  const initial = readInstallRecords(filePath);
-  if (initial === null || initial.length === 0) assertNoOwnershipTransaction(retemperHome());
-  const initialNoOp = reportUpdateNoOp(initial, filePath);
-  if (initialNoOp !== null) return initialNoOp;
+  const stateHome = retemperHome();
+  const initial = readInstallTracking(filePath);
+  if (
+    (initial.entries === null || initial.entries.length === 0) &&
+    !hasOwnershipTransaction(stateHome)
+  ) {
+    return reportUpdateNoOp(initial.entries, filePath) as number;
+  }
   return withStateLock(retemperHome(), () => {
-    const entries = readInstallRecords(filePath);
-    if (entries === null || entries.length === 0) assertNoOwnershipTransaction(retemperHome());
+    const tracking = readInstallTracking(filePath);
+    if (recoverCommittedUpdateTransaction(stateHome, tracking.text)) {
+      const recoveredNoOp = reportUpdateNoOp(tracking.entries, filePath);
+      if (recoveredNoOp !== null) return recoveredNoOp;
+      console.log("Recovered the completed update transaction.");
+      return 0;
+    }
+    const entries = tracking.entries;
+    if (entries === null || entries.length === 0) assertNoOwnershipTransaction(stateHome);
     const lockedNoOp = reportUpdateNoOp(entries, filePath);
     if (lockedNoOp !== null) return lockedNoOp;
     const prepared = entries.map((entry) => prepareUpdate(entry, opts));
     if (!hasUpdateMutation(prepared)) {
-      assertNoOwnershipTransaction(retemperHome());
+      assertNoOwnershipTransaction(stateHome);
       return runPreparedUpdate(opts, entries, prepared, false);
     }
-    const intent = { kind: "update" as const, records: updateIntentRecords(prepared) };
-    assertOwnershipIntentAllowed(retemperHome(), intent);
-    rotateStateGeneration(retemperHome());
-    const transaction = beginOwnershipTransaction(retemperHome(), intent);
+    const intent = {
+      kind: "update" as const,
+      records: updateIntentRecords(prepared),
+      trackingBefore: tracking.text,
+      trackingAfter: formatInstalls(expectedUpdatedEntries(prepared)),
+    };
+    assertOwnershipIntentAllowed(stateHome, intent);
+    rotateStateGeneration(stateHome);
+    const transaction = beginOwnershipTransaction(stateHome, intent);
     const result = runPreparedUpdate(opts, entries, prepared, true);
     if (result === 0) finishOwnershipTransaction(transaction);
     return result;

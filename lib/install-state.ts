@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import {
   mkdirSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmdirSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -34,13 +34,20 @@ export type StateLock = {
   inode: string;
 };
 
-export type OwnershipIntent = {
-  kind: "install" | "update";
-  records: ValidInstall[];
-};
+export type OwnershipIntent =
+  | {
+    kind: "install";
+    records: ValidInstall[];
+  }
+  | {
+    kind: "update";
+    records: ValidInstall[];
+    trackingBefore: string | null;
+    trackingAfter: string | null;
+  };
 
 type StoredOwnershipTransaction = OwnershipIntent & {
-  version: 1;
+  version: 2;
   token: string;
   startedAt: string;
 };
@@ -113,11 +120,18 @@ function processIsAlive(pid: number): boolean {
 
 function recoverDeadStateLock(path: string): void {
   const ownerPath = join(path, "owner");
-  let ownerText: string;
   let stats;
   try {
+    stats = lstatSync(path, { bigint: true });
+  } catch (error) {
+    throw lockRecoveryError(path, `has missing or unreadable owner metadata (${nodeErrorCode(error) || "unknown error"})`);
+  }
+  if (!stats.isDirectory()) {
+    throw lockRecoveryError(path, stats.isSymbolicLink() ? "is a symbolic link" : "is not a directory");
+  }
+  let ownerText: string;
+  try {
     ownerText = readFileSync(ownerPath, "utf8");
-    stats = statSync(path, { bigint: true });
   } catch (error) {
     throw lockRecoveryError(path, `has missing or unreadable owner metadata (${nodeErrorCode(error) || "unknown error"})`);
   }
@@ -134,8 +148,9 @@ function recoverDeadStateLock(path: string): void {
     throw lockRecoveryError(path, "contains unexpected files and cannot be recovered automatically");
   }
   const currentText = readFileSync(ownerPath, "utf8");
-  const currentStats = statSync(path, { bigint: true });
+  const currentStats = lstatSync(path, { bigint: true });
   if (
+    !currentStats.isDirectory() ||
     currentText !== ownerText ||
     String(currentStats.dev) !== String(stats.dev) ||
     String(currentStats.ino) !== String(stats.ino)
@@ -187,7 +202,8 @@ export function acquireStateLock(stateHome: string): StateLock {
   const ownerPath = join(path, "owner");
   try {
     writeFileSync(ownerPath, ownerText, { flag: "wx", mode: 0o600 });
-    const stats = statSync(path, { bigint: true });
+    const stats = lstatSync(path, { bigint: true });
+    if (!stats.isDirectory()) throw lockRecoveryError(path, "was replaced before ownership metadata was recorded");
     return {
       path,
       ownerPath,
@@ -212,11 +228,25 @@ export function acquireStateLock(stateHome: string): StateLock {
 }
 
 export function releaseStateLock(lock: StateLock): void {
-  let owner: string;
   let stats;
   try {
+    stats = lstatSync(lock.path, { bigint: true });
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new Error(`Retemper state lock ownership was lost at ${lock.path}; refusing unsafe continuation.`);
+    }
+    throw error;
+  }
+  if (
+    !stats.isDirectory() ||
+    String(stats.dev) !== lock.device ||
+    String(stats.ino) !== lock.inode
+  ) {
+    throw new Error(`Retemper state lock was replaced at ${lock.path}; refusing to remove a foreign lock.`);
+  }
+  let owner: string;
+  try {
     owner = readFileSync(lock.ownerPath, "utf8");
-    stats = statSync(lock.path, { bigint: true });
   } catch (error) {
     if (isMissingPathError(error)) {
       throw new Error(`Retemper state lock ownership was lost at ${lock.path}; refusing unsafe continuation.`);
@@ -231,8 +261,12 @@ export function releaseStateLock(lock: StateLock): void {
     throw new Error(`Retemper state lock was replaced at ${lock.path}; refusing to remove a foreign lock.`);
   }
   unlinkSync(lock.ownerPath);
-  const beforeRemoval = statSync(lock.path, { bigint: true });
-  if (String(beforeRemoval.dev) !== lock.device || String(beforeRemoval.ino) !== lock.inode) {
+  const beforeRemoval = lstatSync(lock.path, { bigint: true });
+  if (
+    !beforeRemoval.isDirectory() ||
+    String(beforeRemoval.dev) !== lock.device ||
+    String(beforeRemoval.ino) !== lock.inode
+  ) {
     throw new Error(`Retemper state lock was replaced at ${lock.path}; refusing to remove a foreign lock.`);
   }
   rmdirSync(lock.path);
@@ -277,13 +311,21 @@ function parseOwnershipTransaction(text: string, path: string): StoredOwnershipT
   }
   if (
     !plainObject(value) ||
-    !exactKeys(value, ["kind", "records", "startedAt", "token", "version"]) ||
-    value.version !== 1 ||
     (value.kind !== "install" && value.kind !== "update") ||
+    !exactKeys(
+      value,
+      value.kind === "update"
+        ? ["kind", "records", "startedAt", "token", "trackingAfter", "trackingBefore", "version"]
+        : ["kind", "records", "startedAt", "token", "version"],
+    ) ||
+    value.version !== 2 ||
     !Array.isArray(value.records) ||
     !validTimestamp(value.startedAt) ||
     typeof value.token !== "string" ||
-    !/^[a-f0-9]{64}$/.test(value.token)
+    !/^[a-f0-9]{64}$/.test(value.token) ||
+    (value.kind === "update" &&
+      !((typeof value.trackingBefore === "string" || value.trackingBefore === null) &&
+        (typeof value.trackingAfter === "string" || value.trackingAfter === null)))
   ) {
     throw new Error(`Invalid unfinished ownership transaction at ${path}; refusing unsafe state recovery.`);
   }
@@ -295,13 +337,21 @@ function parseOwnershipTransaction(text: string, path: string): StoredOwnershipT
   if (JSON.stringify(records) !== JSON.stringify(normalizeOwnershipRecords(records))) {
     throw new Error(`Invalid unfinished ownership transaction at ${path}; record set is not canonical.`);
   }
-  return {
-    version: 1,
-    kind: value.kind,
+  const common = {
+    version: 2 as const,
     records,
     startedAt: value.startedAt,
     token: value.token,
   };
+  if (value.kind === "update") {
+    return {
+      ...common,
+      kind: "update",
+      trackingBefore: value.trackingBefore as string | null,
+      trackingAfter: value.trackingAfter as string | null,
+    };
+  }
+  return { ...common, kind: "install" };
 }
 
 function readOwnershipTransaction(stateHome: string): StoredOwnershipTransaction | null {
@@ -315,8 +365,22 @@ function readOwnershipTransaction(stateHome: string): StoredOwnershipTransaction
 }
 
 function sameOwnershipIntent(value: StoredOwnershipTransaction, intent: OwnershipIntent): boolean {
-  return value.kind === intent.kind &&
-    JSON.stringify(value.records) === JSON.stringify(normalizeOwnershipRecords(intent.records));
+  if (
+    value.kind !== intent.kind ||
+    JSON.stringify(value.records) !== JSON.stringify(normalizeOwnershipRecords(intent.records))
+  ) {
+    return false;
+  }
+  if (value.kind === "update" && intent.kind === "update") {
+    return value.trackingBefore === intent.trackingBefore && value.trackingAfter === intent.trackingAfter;
+  }
+  return true;
+}
+
+function normalizeOwnershipIntent(intent: OwnershipIntent): OwnershipIntent {
+  const records = normalizeOwnershipRecords(intent.records);
+  if (intent.kind === "update") return { ...intent, records };
+  return { kind: "install", records };
 }
 
 function ownershipIntentDescription(value: OwnershipIntent): string {
@@ -331,7 +395,7 @@ export function beginOwnershipTransaction(
   intent: OwnershipIntent,
 ): OwnershipTransaction {
   const path = ownershipTransactionPath(stateHome);
-  const canonicalIntent = { ...intent, records: normalizeOwnershipRecords(intent.records) };
+  const canonicalIntent = normalizeOwnershipIntent(intent);
   const existing = readOwnershipTransaction(stateHome);
   if (existing) {
     if (!sameOwnershipIntent(existing, canonicalIntent)) {
@@ -343,9 +407,8 @@ export function beginOwnershipTransaction(
     return { path, value: existing };
   }
   const value: StoredOwnershipTransaction = {
-    version: 1,
-    kind: canonicalIntent.kind,
-    records: canonicalIntent.records,
+    ...canonicalIntent,
+    version: 2,
     startedAt: new Date().toISOString(),
     token: randomBytes(32).toString("hex"),
   };
@@ -364,6 +427,32 @@ export function assertOwnershipIntentAllowed(stateHome: string, intent: Ownershi
       `Refusing unrelated ${ownershipIntentDescription(intent)}.`,
     );
   }
+}
+
+export function hasOwnershipTransaction(stateHome: string): boolean {
+  return readOwnershipTransaction(stateHome) !== null;
+}
+
+export function recoverCommittedUpdateTransaction(
+  stateHome: string,
+  currentTracking: string | null,
+): boolean {
+  const transaction = readOwnershipTransaction(stateHome);
+  if (!transaction || transaction.kind !== "update") return false;
+  if (
+    transaction.trackingBefore !== transaction.trackingAfter &&
+    currentTracking === transaction.trackingAfter
+  ) {
+    finishOwnershipTransaction({ path: ownershipTransactionPath(stateHome), value: transaction });
+    return true;
+  }
+  if (currentTracking !== transaction.trackingBefore) {
+    throw new Error(
+      `Install tracking no longer matches either side of the unfinished ${ownershipIntentDescription(transaction)}; ` +
+      "refusing unsafe recovery.",
+    );
+  }
+  return false;
 }
 
 export function finishOwnershipTransaction(transaction: OwnershipTransaction): void {

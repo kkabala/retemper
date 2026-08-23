@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -72,6 +81,32 @@ test("acquireStateLock safely recovers a dead same-host owner", () => {
   }
 });
 
+test("acquireStateLock never follows a symlinked lock or removes its external owner", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-state-lock-symlink-"));
+  const home = join(holder, "state");
+  const external = join(holder, "external-lock");
+  const exited = spawnSync(process.execPath, ["-e", ""]);
+  assert.ok(exited.pid);
+  mkdirSync(home);
+  mkdirSync(external);
+  const ownerPath = join(external, "owner");
+  writeFileSync(ownerPath, `${JSON.stringify({
+    version: 1,
+    pid: exited.pid,
+    hostname: hostname(),
+    startedAt: new Date().toISOString(),
+    token: "d".repeat(64),
+  })}\n`);
+  symlinkSync(external, join(home, "state.lock"), "dir");
+  try {
+    assert.throws(() => acquireStateLock(home), /symbolic link|not.*directory|manual/i);
+    assert.equal(lstatSync(join(home, "state.lock")).isSymbolicLink(), true);
+    assert.equal(existsSync(ownerPath), true);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("acquireStateLock never steals live, foreign-host, or malformed locks", () => {
   const cases = [
     {
@@ -125,13 +160,19 @@ test("ownership recovery accepts only the exact unfinished intent and token", ()
   const updateIntent = {
     kind: "update" as const,
     records: [{ platform: "cursor", scope: "project" as const, path: join(home, "project") }],
+    trackingBefore: "cursor project /before\n",
+    trackingAfter: "cursor project /after\n",
   };
   try {
     const transaction = beginOwnershipTransaction(home, updateIntent);
     assert.throws(() => assertNoOwnershipTransaction(home), /unfinished.*update/i);
     assert.throws(
-      () => beginOwnershipTransaction(home, { ...updateIntent, kind: "install" }),
+      () => beginOwnershipTransaction(home, { kind: "install", records: updateIntent.records }),
       /same update|unrelated install/i,
+    );
+    assert.throws(
+      () => beginOwnershipTransaction(home, { ...updateIntent, trackingBefore: "changed tracking\n" }),
+      /same update|unrelated update/i,
     );
     const retry = beginOwnershipTransaction(home, updateIntent);
     assert.equal(retry.value.token, transaction.value.token);
