@@ -584,6 +584,25 @@ test("CLI dry-run for Codex project prints dests and writes nothing", () => {
   });
 });
 
+test("CLI dry-run does not create a nonexistent state home", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-dry-state-"));
+  const target = join(holder, "project");
+  const home = join(holder, "missing-state");
+  mkdirSync(target);
+  try {
+    const result = cli(
+      ["--dry-run", "--platform", "codex", "--scope", "project", "--target", target],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(home), false);
+    assert.equal(existsSync(join(target, ".agents")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("CLI project install requires an explicit target and leaves the working directory untouched", () => {
   const workingDirectory = mkdtempSync(join(tmpdir(), "retemper-no-target-"));
   withHome((home) => {
@@ -997,6 +1016,20 @@ test("CLI --update with no tracking file tells the user to install and writes no
   });
 });
 
+test("CLI --update with no tracking file does not create a nonexistent state home", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-update-missing-state-"));
+  const home = join(holder, "missing-state");
+  try {
+    const result = cli(["--update"], { RETEMPER_HOME: home });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /installs\.txt/);
+    assert.equal(existsSync(home), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("CLI --update restores a deleted Cursor project payload from the tracking file", () => {
   const target = mkdtempSync(join(tmpdir(), "retemper-upd-"));
   withHome((home) => {
@@ -1102,6 +1135,8 @@ test("CLI --update with an empty tracking file reports nothing to update", () =>
     const result = cli(["--update"], { RETEMPER_HOME: home });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /nothing to update/i);
+    assert.equal(existsSync(join(home, "state.generation")), false);
+    assert.equal(existsSync(join(home, "state.lock")), false);
   });
 });
 
@@ -1352,6 +1387,26 @@ test("CLI --platform grok claude rejects the unknown name and writes nothing", (
   });
 });
 
+test("CLI rejects an invalid platform before creating state", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-invalid-state-"));
+  const target = join(holder, "project");
+  const home = join(holder, "missing-state");
+  mkdirSync(target);
+  try {
+    const result = cli(
+      ["--platform", "nope", "--scope", "project", "--target", target, "--skip-deps"],
+      { RETEMPER_HOME: home },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Unsupported platform "nope"/);
+    assert.equal(existsSync(home), false);
+    assert.equal(existsSync(join(target, ".agents")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
+});
+
 test("CLI multi-platform user install writes Grok and shared Cursor skill dests", () => {
   const grok = mkdtempSync(join(tmpdir(), "retemper-user-grok-"));
   const agents = mkdtempSync(join(tmpdir(), "retemper-user-agents-"));
@@ -1478,6 +1533,33 @@ test("CLI user install repairs legacy self-referential skill links", () => {
       rmSync(sharedHome, { recursive: true, force: true });
     }
   });
+});
+
+test("CLI rejects an escaped skills parent before repairing an external self-link", () => {
+  const holder = mkdtempSync(join(tmpdir(), "retemper-escaped-self-link-"));
+  const agents = join(holder, "agents");
+  const externalSkills = join(holder, "external-skills");
+  const home = join(holder, "state");
+  mkdirSync(agents);
+  mkdirSync(externalSkills);
+  symlinkSync(externalSkills, join(agents, "skills"), "dir");
+  const externalSkill = join(externalSkills, "retemper");
+  symlinkSync(externalSkill, externalSkill, "dir");
+  try {
+    const result = cli(["--platform", "codex", "--scope", "user", "--skip-deps"], {
+      RETEMPER_HOME: home,
+      AGENTS_HOME: agents,
+      CODEX_HOME: agents,
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /outside.*physical.*root|escapes.*target/i);
+    assert.equal(lstatSync(externalSkill).isSymbolicLink(), true);
+    assert.equal(resolve(dirname(externalSkill), readlinkSync(externalSkill)), externalSkill);
+    assert.equal(existsSync(join(home, "installs.txt")), false);
+  } finally {
+    rmSync(holder, { recursive: true, force: true });
+  }
 });
 
 test("CLI user install does not replace an unrelated dangling skill link", () => {

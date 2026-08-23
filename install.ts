@@ -39,6 +39,24 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import {
+  assertInstallLinkParentPhysicalContainment,
+  assertInstallPlanPhysicalContainment,
+  createInstallManifest,
+  isMissingPathError,
+  writeCoherentInstallManifests,
+} from "./lib/install-manifest.ts";
+import {
+  assertNoOwnershipTransaction,
+  assertOwnershipIntentAllowed,
+  beginOwnershipTransaction,
+  finishOwnershipTransaction,
+  hasOwnershipTransaction,
+  recoverCommittedUpdateTransaction,
+  rotateStateGeneration,
+  withStateLock,
+} from "./lib/install-state.ts";
+
 const here = dirname(fileURLToPath(import.meta.url));
 export const NAME = "retemper";
 export const SUPPORTED_PLATFORMS = ["grok", "codex", "copilot", "cursor"];
@@ -393,14 +411,28 @@ function writeInstalls(entries: InstallEntry[], filePath = installsPath()): void
   renameSync(tmp, filePath);
 }
 
+function readInstallTracking(filePath = installsPath()): { text: string | null; entries: InstallEntry[] | null } {
+  let text: string;
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) return { text: null, entries: null };
+    throw error;
+  }
+  return { text, entries: parseInstalls(text) };
+}
+
 function readInstallRecords(filePath = installsPath()): InstallEntry[] | null {
-  if (!existsSync(filePath)) return null;
-  return parseInstalls(readFileSync(filePath, "utf8"));
+  return readInstallTracking(filePath).entries;
 }
 
 function recordInstall(plan: InstallPlan): void {
   const filePath = installsPath();
-  writeInstalls(upsertInstalls(readInstallRecords(filePath) || [], recordFromPlan(plan)), filePath);
+  const record = recordFromPlan(plan);
+  const entries = readInstallRecords(filePath) || [];
+  const trackedRecords = entries.filter((entry): entry is ValidInstall => !entry.invalid);
+  writeCoherentInstallManifests(retemperHome(), createInstallManifest(plan, record), trackedRecords);
+  writeInstalls(upsertInstalls(entries, record), filePath);
 }
 
 function sharedSources(): SharedSources {
@@ -690,9 +722,11 @@ function replaceWithSymlink(src: string, dest: string): void {
 }
 
 export function apply(plan: InstallPlan, opts: { skipDeps?: boolean }): void {
+  assertInstallLinkParentPhysicalContainment(plan);
   for (const link of plan.skillLinks) {
     repairLegacySelfLink(link.src, link.dest);
   }
+  assertInstallPlanPhysicalContainment(plan);
   if (plan.workflowSrc && plan.workflowDest) {
     mkdirSync(dirname(plan.workflowDest), { recursive: true });
     writeFileSync(plan.workflowDest, readFileSync(plan.workflowSrc));
@@ -767,14 +801,18 @@ type UpdateOutcome = {
   failed: boolean;
 };
 
-function updateOne(entry: InstallEntry, opts: ParsedArgs): UpdateOutcome {
+type PreparedUpdate =
+  | { kind: "malformed"; entry: InstallEntry }
+  | { kind: "missing"; entry: ValidInstall }
+  | { kind: "failed"; entry: ValidInstall; message: string }
+  | { kind: "ready"; entry: ValidInstall; plan: InstallPlan };
+
+function prepareUpdate(entry: InstallEntry, opts: ParsedArgs): PreparedUpdate {
   if (entry.invalid) {
-    console.error(`Skipping malformed install record: ${entry.raw}`);
-    return { keep: true, entry, failed: false };
+    return { kind: "malformed", entry };
   }
   if (entry.scope === "project" && !existsSync(entry.path)) {
-    console.error(`Skipping missing project path: ${entry.path}`);
-    return { keep: Boolean(opts.dryRun), entry, failed: false };
+    return { kind: "missing", entry };
   }
   try {
     const plan = planInstall({
@@ -783,20 +821,44 @@ function updateOne(entry: InstallEntry, opts: ParsedArgs): UpdateOutcome {
       target: entry.path,
       standards: opts.standards,
     });
-    console.log(describe(plan, opts));
-    if (!opts.dryRun) {
-      applyPlan(plan, opts);
-    }
-    return { keep: true, entry: recordFromPlan(plan), failed: false };
+    return { kind: "ready", entry, plan };
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
-    return { keep: true, entry, failed: true };
+    return {
+      kind: "failed",
+      entry,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
-function runUpdate(opts: ParsedArgs): number {
-  const filePath = installsPath();
-  const entries = readInstallRecords(filePath);
+function updateOne(prepared: PreparedUpdate, opts: ParsedArgs, trackedRecords: ValidInstall[]): UpdateOutcome {
+  if (prepared.kind === "malformed") {
+    console.error(`Skipping malformed install record: ${prepared.entry.invalid ? prepared.entry.raw : ""}`);
+    return { keep: true, entry: prepared.entry, failed: false };
+  }
+  if (prepared.kind === "missing") {
+    console.error(`Skipping missing project path: ${prepared.entry.path}`);
+    return { keep: Boolean(opts.dryRun), entry: prepared.entry, failed: false };
+  }
+  if (prepared.kind === "failed") {
+    console.error(prepared.message);
+    return { keep: true, entry: prepared.entry, failed: true };
+  }
+  console.log(describe(prepared.plan, opts));
+  try {
+    if (!opts.dryRun) {
+      applyPlan(prepared.plan, opts);
+      const record = recordFromPlan(prepared.plan);
+      writeCoherentInstallManifests(retemperHome(), createInstallManifest(prepared.plan, record), trackedRecords);
+    }
+    return { keep: true, entry: recordFromPlan(prepared.plan), failed: false };
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    return { keep: true, entry: prepared.entry, failed: true };
+  }
+}
+
+function reportUpdateNoOp(entries: InstallEntry[] | null, filePath: string): number | null {
   if (entries === null) {
     console.error(missingInstallsMessage(filePath));
     return 1;
@@ -805,39 +867,123 @@ function runUpdate(opts: ParsedArgs): number {
     console.log("Nothing to update.");
     return 0;
   }
+  return null;
+}
+
+function runPreparedUpdate(
+  opts: ParsedArgs,
+  entries: InstallEntry[],
+  prepared: PreparedUpdate[],
+  persist: boolean,
+): number {
+  const filePath = installsPath();
   let kept: InstallEntry[] = [];
   let failed = 0;
-  for (const entry of entries) {
-    const outcome = updateOne(entry, opts);
+  const trackedRecords = entries.filter((entry): entry is ValidInstall => !entry.invalid);
+  for (const item of prepared) {
+    const outcome = updateOne(item, opts, trackedRecords);
     if (outcome.keep) {
       if (outcome.entry.invalid) kept.push(outcome.entry);
       else kept = upsertInstalls(kept, outcome.entry);
     }
     if (outcome.failed) failed += 1;
   }
-  if (!opts.dryRun) {
-    writeInstalls(kept, filePath);
-  }
+  if (persist && failed === 0) writeInstalls(kept, filePath);
   return failed === 0 ? 0 : 1;
 }
 
-function installOne(platform: string, opts: ParsedArgs): void {
-  const plan = planInstall({ ...opts, platform });
-  console.log(describe(plan, opts));
-  if (opts.dryRun) {
-    return;
+function hasUpdateMutation(prepared: PreparedUpdate[]): boolean {
+  return prepared.some((item) => item.kind === "ready" || item.kind === "missing");
+}
+
+function updateIntentRecords(prepared: PreparedUpdate[]): ValidInstall[] {
+  return prepared.flatMap((item) => {
+    if (item.kind === "ready") return [recordFromPlan(item.plan)];
+    if (item.kind === "missing") return [item.entry];
+    return [];
+  });
+}
+
+function expectedUpdatedEntries(prepared: PreparedUpdate[]): InstallEntry[] {
+  let kept: InstallEntry[] = [];
+  for (const item of prepared) {
+    if (item.kind === "missing") continue;
+    const entry = item.kind === "ready" ? recordFromPlan(item.plan) : item.entry;
+    if (entry.invalid) kept.push(entry);
+    else kept = upsertInstalls(kept, entry);
   }
+  return kept;
+}
+
+function runUpdate(opts: ParsedArgs): number {
+  const filePath = installsPath();
+  const entries = readInstallRecords(filePath);
+  const noOp = reportUpdateNoOp(entries, filePath);
+  if (noOp !== null) return noOp;
+  const prepared = entries.map((entry) => prepareUpdate(entry, opts));
+  return runPreparedUpdate(opts, entries, prepared, false);
+}
+
+function runMutatingUpdate(opts: ParsedArgs): number {
+  const filePath = installsPath();
+  const stateHome = retemperHome();
+  const initial = readInstallTracking(filePath);
+  if (
+    (initial.entries === null || initial.entries.length === 0) &&
+    !hasOwnershipTransaction(stateHome)
+  ) {
+    return reportUpdateNoOp(initial.entries, filePath) as number;
+  }
+  return withStateLock(retemperHome(), () => {
+    const tracking = readInstallTracking(filePath);
+    if (recoverCommittedUpdateTransaction(stateHome, tracking.text)) {
+      const recoveredNoOp = reportUpdateNoOp(tracking.entries, filePath);
+      if (recoveredNoOp !== null) return recoveredNoOp;
+      console.log("Recovered the completed update transaction.");
+      return 0;
+    }
+    const entries = tracking.entries;
+    if (entries === null || entries.length === 0) assertNoOwnershipTransaction(stateHome);
+    const lockedNoOp = reportUpdateNoOp(entries, filePath);
+    if (lockedNoOp !== null) return lockedNoOp;
+    const prepared = entries.map((entry) => prepareUpdate(entry, opts));
+    if (!hasUpdateMutation(prepared)) {
+      assertNoOwnershipTransaction(stateHome);
+      return runPreparedUpdate(opts, entries, prepared, false);
+    }
+    const intent = {
+      kind: "update" as const,
+      records: updateIntentRecords(prepared),
+      trackingBefore: tracking.text,
+      trackingAfter: formatInstalls(expectedUpdatedEntries(prepared)),
+    };
+    assertOwnershipIntentAllowed(stateHome, intent);
+    rotateStateGeneration(stateHome);
+    const transaction = beginOwnershipTransaction(stateHome, intent);
+    const result = runPreparedUpdate(opts, entries, prepared, true);
+    if (result === 0) finishOwnershipTransaction(transaction);
+    return result;
+  });
+}
+
+function prepareInstall(opts: ParsedArgs): InstallPlan[] {
+  assertSupportedPlatforms(opts.platforms);
+  return opts.platforms.map((platform) => planInstall({ ...opts, platform }));
+}
+
+function installOne(plan: InstallPlan, opts: ParsedArgs): void {
+  console.log(describe(plan, opts));
+  if (opts.dryRun) return;
   applyPlan(plan, opts);
   recordInstall(plan);
   console.log(`installed ${NAME} (${plan.scope})`);
 }
 
-function runInstall(opts: ParsedArgs): number {
-  assertSupportedPlatforms(opts.platforms);
+function runInstall(opts: ParsedArgs, plans: InstallPlan[]): number {
   let failed = 0;
-  for (const platform of opts.platforms) {
+  for (const plan of plans) {
     try {
-      installOne(platform, opts);
+      installOne(plan, opts);
     } catch (error) {
       console.error(error instanceof Error ? error.message : error);
       failed += 1;
@@ -852,10 +998,18 @@ export function main(argv: string[] = process.argv): number {
     console.log(helpText());
     return 0;
   }
-  if (opts.update) {
-    return runUpdate(opts);
-  }
-  return runInstall(opts);
+  if (opts.update) return opts.dryRun ? runUpdate(opts) : runMutatingUpdate(opts);
+  const plans = prepareInstall(opts);
+  if (opts.dryRun) return runInstall(opts, plans);
+  return withStateLock(retemperHome(), () => {
+    const intent = { kind: "install" as const, records: plans.map(recordFromPlan) };
+    assertOwnershipIntentAllowed(retemperHome(), intent);
+    rotateStateGeneration(retemperHome());
+    const transaction = beginOwnershipTransaction(retemperHome(), intent);
+    const result = runInstall(opts, plans);
+    if (result === 0) finishOwnershipTransaction(transaction);
+    return result;
+  });
 }
 
 export function runCli(moduleUrl: string = import.meta.url): void {
