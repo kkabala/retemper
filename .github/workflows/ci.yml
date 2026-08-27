@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: npm test (Node 26)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Require the engines Node major
+        run: |
+          node -e "
+            const major = Number.parseInt(process.versions.node, 10);
+            if (major < 26) {
+              console.error('CI must run Node 26+; this runner is', process.version);
+              process.exit(1);
+            }
+            console.log(process.version);
+          "
+      - run: npm test
+
+  cli-matrix:
+    name: CLI ${{ matrix.platform }} install → update → uninstall
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [grok, codex, copilot, cursor]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Exercise the packed npx CLI against a temp project
+        env:
+          RETEMPER_CLI_PLATFORM: ${{ matrix.platform }}
+          RETEMPER_CLI_MODE: published
+        run: node --test tests/cli-matrix.test.ts

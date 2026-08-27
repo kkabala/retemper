@@ -9,7 +9,8 @@ Keep this file short. Put only rules a stranger would miss.
 ## Language and runtime
 
 - Node ESM (`"type": "module"`), TypeScript sources. Run tests with `npm test` (`node --test tests/*.test.ts`).
-- No extra runtime dependencies; the installer stays on Node built-ins.
+- Runtime is Node 26+ (`engines.node`, `.nvmrc`). CI and the published CLI fail closed below that; do not silently test on Node 22.
+- No extra runtime dependencies; the installer stays on Node built-ins. The `bin/` JavaScript shims exist only so `npx retemper` can load the same `.ts` sources from `node_modules` (Node will not type-strip there).
 
 ## Layout
 
@@ -29,6 +30,7 @@ Keep this file short. Put only rules a stranger would miss.
 ## Tests
 
 - Test behaviour, not implementation.
+- GitHub Actions must run `npm test` on Node 26 and a platform matrix that drives the real packed CLI (`install` → `update` → `uninstall`) against a temp project. Skip-deps is the CI grill-fetch path; do not fake a green job that never invokes the CLI.
 - Installer CLI tests that apply or update must set `RETEMPER_HOME` to a temp dir so they never write the real `~/.retemper`.
 - Grok user-scope CLI tests must also set `GROK_HOME` to a temp dir. Skill user-scope CLI tests must set `AGENTS_HOME` and `CODEX_HOME` to temp dirs. Do not write into the real `~/.agents` or `~/.codex` from tests.
 - Skill user-scope payload stays under `~/.agents/skills`. Cursor discovers that root directly. Codex CLI user discovery is `$CODEX_HOME/skills` (default `~/.codex/skills`): symlink the skill folders there after the copy. Project-scope `<repo>/.agents/skills` is enough for Codex, Copilot, and Cursor.

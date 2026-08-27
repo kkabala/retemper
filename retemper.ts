@@ -2,10 +2,11 @@
 /**
  * Retemper single entry point — one command with install / uninstall / update verbs.
  *
- *   node retemper.ts install [installer flags]
- *   node retemper.ts uninstall [uninstaller flags]
- *   node retemper.ts update [--dry-run] [--skip-deps] [--standards]
- *   node retemper.ts help
+ *   npx retemper install [installer flags]
+ *   npx retemper uninstall [uninstaller flags]
+ *   npx retemper update [--dry-run] [--skip-deps] [--standards]
+ *   npx retemper help
+ *   node retemper.ts …   (from a clone; same verbs)
  */
 
 import { resolve } from "node:path";
@@ -19,18 +20,19 @@ export function usageText(): string {
     "retemper — plan → accept → build → harden → review → QA → PR cycle",
     "",
     "Usage:",
-    "  node retemper.ts install [flags]     same flags as install.ts",
-    "  node retemper.ts uninstall [flags]   remove installs; --all is the default filter",
-    "  node retemper.ts update [flags]      refresh every recorded install",
-    "  node retemper.ts help                show this text",
+    "  npx retemper install [flags]         same flags as install.ts",
+    "  npx retemper uninstall [flags]       remove installs; --all is the default filter",
+    "  npx retemper update [flags]          refresh every recorded install",
+    "  npx retemper help                    show this text",
+    "  node retemper.ts install [flags]     from a clone; same verbs as npx retemper",
     "",
     "Per-verb flags:",
-    "  node retemper.ts install --help",
-    "  node retemper.ts uninstall --help",
+    "  npx retemper install --help",
+    "  npx retemper uninstall --help",
   ].join("\n");
 }
 
-async function dispatch(argv: string[]): Promise<number> {
+export async function dispatch(argv: string[]): Promise<number> {
   const [, , verb, ...rest] = argv;
   if (!verb || verb === "-h" || verb === "--help" || verb === "help") {
     console.log(usageText());

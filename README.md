@@ -8,15 +8,21 @@ for Grok Build, Codex, GitHub Copilot, and Cursor.
 - Copilot: `/retemper <task>`
 - Cursor: `/retemper <task>` (or type `/` and select **retemper**)
 
+Requires **Node.js 26 or later**. The package declares `"engines": { "node": ">=26" }`
+and the CLI exits with that requirement instead of failing inside Node's TypeScript loader.
+
 ## Install
 
 ```bash
-node install.ts --help
-node install.ts --platform grok --scope user
-node install.ts --platform cursor --scope user
-node install.ts --platform grok,codex,cursor --scope project --target /path/to/repo
-node install.ts --update
+npx retemper install --help
+npx retemper install --platform grok --scope user
+npx retemper install --platform cursor --scope user
+npx retemper install --platform grok,codex,cursor --scope project --target /path/to/repo
+npx retemper update
 ```
+
+From a clone of this repo, `node retemper.ts …` and `node install.ts …` are the same
+commands. Dedicated bins `retemper-install` and `retemper-uninstall` stay available.
 
 `--platform` is `grok`, `codex`, `copilot`, or `cursor`. `--scope` is `user` or
 `project` (project needs `--target`). `--dry-run` prints the plan and writes
@@ -32,7 +38,7 @@ dependencies and, unless `--skip-deps` is set, refreshes them with
 `npx skills@latest`. Cursor dependency fetches target the same shared
 `.agents/skills` tree.
 
-Cursor npm shortcuts are also available:
+Cursor npm shortcuts are also available from a clone:
 
 ```bash
 npm run install:user:cursor
@@ -42,11 +48,11 @@ npm run install:user:cursor:dry
 ## Uninstall
 
 ```bash
-node uninstall.ts                       # --all by default: every recorded install
-node uninstall.ts --dry-run             # list paths, remove nothing, never prompts
-node uninstall.ts --platform grok --scope user
-node uninstall.ts --platform codex --scope project --target /path/to/repo
-node uninstall.ts --all --yes           # skip the y/N prompt (CI)
+npx retemper uninstall                       # --all by default: every recorded install
+npx retemper uninstall --dry-run             # list paths, remove nothing, never prompts
+npx retemper uninstall --platform grok --scope user
+npx retemper uninstall --platform codex --scope project --target /path/to/repo
+npx retemper uninstall --all --yes           # skip the y/N prompt (CI)
 ```
 
 Uninstall accepts the same `--platform` / `--scope` / `--target` grammar as the
@@ -96,16 +102,15 @@ One command exposes both directions, matching common npx CLI conventions
 (`install` / `uninstall` verbs over a single binary):
 
 ```bash
-node retemper.ts install --platform grok --scope user
-node retemper.ts uninstall --all
-node retemper.ts update --dry-run
-node retemper.ts help
+npx retemper install --platform grok --scope user
+npx retemper uninstall --all
+npx retemper update --dry-run
+npx retemper help
 ```
 
-When packaged for npx, this becomes `npx retemper install|uninstall|update`;
-the dedicated `retemper-install` / `retemper-uninstall` bins stay available.
+The dedicated `retemper-install` / `retemper-uninstall` bins stay available.
 
-npm shortcuts:
+Clone shortcuts:
 
 ```bash
 npm run uninstall:all        # interactive --all
@@ -116,6 +121,27 @@ npm run uninstall:all:dry
 
 ```bash
 npm test
+```
+
+GitHub Actions runs that suite on Node 26 and a platform matrix that packs the
+npm tarball, then drives `install` → `update` → `uninstall` for grok, codex,
+copilot, and cursor against a temp project. The matrix exercises this CLI and
+the files it writes. It does not launch the Grok, Codex, Copilot, or Cursor
+agent tools (those are not part of install/update/uninstall). Grill upstream
+fetch (`npx skills@latest`) is skipped with `--skip-deps`; vendor copies ship
+in the package, and a failed fetch currently does not fail the installer.
+
+## Publish
+
+The package is public-ready (`private` is unset). Maintainers publish with a
+GitHub Release (tag `v0.1.0` or similar) or **Actions → Publish → Run
+workflow**. Both require repository secret `NPM_TOKEN` (an npm automation
+token). CI does not publish on push.
+
+Local dry-run of the packed artifact:
+
+```bash
+npm pack --dry-run
 ```
 
 ## License
