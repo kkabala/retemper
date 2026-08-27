@@ -1,15 +1,47 @@
 {
   "name": "retemper",
   "version": "0.1.0",
-  "private": true,
   "license": "MIT",
   "type": "module",
   "description": "Project-agnostic plan → accept → build → harden → review → QA → PR cycle for Grok Build, Codex, GitHub Copilot, and Cursor.",
-  "bin": {
-    "retemper": "./retemper.ts",
-    "retemper-install": "./install.ts",
-    "retemper-uninstall": "./uninstall.ts"
+  "author": "Krzysztof Kabala",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kkabala/retemper.git"
   },
+  "bugs": {
+    "url": "https://github.com/kkabala/retemper/issues"
+  },
+  "homepage": "https://github.com/kkabala/retemper#readme",
+  "keywords": [
+    "retemper",
+    "grok",
+    "codex",
+    "copilot",
+    "cursor",
+    "agent-skills",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=26"
+  },
+  "bin": {
+    "retemper": "./bin/retemper.js",
+    "retemper-install": "./bin/retemper-install.js",
+    "retemper-uninstall": "./bin/retemper-uninstall.js"
+  },
+  "files": [
+    "bin/",
+    "retemper.ts",
+    "install.ts",
+    "uninstall.ts",
+    "lib/",
+    "references/",
+    "templates/",
+    "vendor/",
+    ".agents/",
+    ".grok/"
+  ],
   "scripts": {
     "test": "node --test tests/*.test.ts",
     "install:user": "node install.ts --platform grok --scope user",
