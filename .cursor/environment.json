@@ -1,0 +1,4 @@
+{
+  "name": "retemper",
+  "install": "bash .cursor/install.sh"
+}
